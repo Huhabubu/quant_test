@@ -2,14 +2,10 @@ name: basis-monitor-sample
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/monitor.yml"
 
 jobs:
   monitor:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 350
 
     steps:
