@@ -29,10 +29,10 @@ def numeric(value):
     return s or "0"
 
 
-def download_chd(kind, directory):
-    remote = f"binance_futures/{DATE}/{HOUR}/{SYMBOL}_{kind}.parquet"
+def download_chd(kind, directory, hour=HOUR):
+    remote = f"binance_futures/{DATE}/{hour}/{SYMBOL}_{kind}.parquet"
     url = "https://api.cryptohftdata.com/v1/download?" + urlencode({"file": remote})
-    dest = Path(directory) / (kind + ".parquet")
+    dest = Path(directory) / (kind + "_" + hour + ".parquet")
     request = Request(url, headers={"User-Agent": "quant-test-crosscheck/1.0"})
     with urlopen(request, timeout=90) as response, dest.open("wb") as output:
         size = 0
@@ -65,6 +65,7 @@ def check_trades(directory):
     trades = {}
     chd_count = 0
     chd_dupes = 0
+    meta = {}
     f = pq.ParquetFile(download_chd("trades", directory))
     for batch in f.iter_batches(batch_size=100_000):
         data = batch.to_pydict()
@@ -77,6 +78,7 @@ def check_trades(directory):
             if key in trades:
                 chd_dupes += 1
             trades[key] = value
+            meta[key] = (str(data["order_type"][i]), int(data["received_time"][i]))
 
     tardis_count = 0
     unique = set()
@@ -102,7 +104,12 @@ def check_trades(directory):
         if counterpart == sample:
             matches += 1
 
-    extra_trade_times = [trades[x][0] for x in trades.keys() - unique]
+    extra_ids = trades.keys() - unique
+    extra_trade_times = [trades[x][0] for x in extra_ids]
+    extra_order_types = Counter(meta[x][0] for x in extra_ids)
+    extra_zero_price_qty = sum(trades[x][1] == "0" and trades[x][2] == "0" for x in extra_ids)
+    common_order_types = Counter(meta[x][0] for x in trades.keys() & unique)
+    extra_time_received_offset_ms = [meta[x][1] // 1_000_000 - trades[x][0] for x in extra_ids]
     extra_trade_buckets = Counter(
         "before_hour" if t < START_MS else
         "after_hour" if t >= END_MS else
@@ -110,6 +117,11 @@ def check_trades(directory):
         for t in extra_trade_times
     )
     return {
+        "extra_order_type_counts": dict(extra_order_types),
+        "extra_zero_price_and_quantity": extra_zero_price_qty,
+        "common_order_type_counts": dict(common_order_types),
+        "extra_min_receive_lag_ms": min(extra_time_received_offset_ms, default=None),
+        "extra_max_receive_lag_ms": max(extra_time_received_offset_ms, default=None),
         "cryptohftdata_extra_by_exchange_minute": dict(sorted(extra_trade_buckets.items())),
         "cryptohftdata_extra_first_timestamp_ms": min(extra_trade_times, default=None),
         "cryptohftdata_extra_last_timestamp_ms": max(extra_trade_times, default=None),
@@ -149,10 +161,19 @@ def check_orderbook(directory):
     tardis_counts = Counter()
     tardis_rows_count = 0
     tardis_snapshots = 0
+    first_tardis_update_ms = None
+    last_tardis_update_ms = None
+    first_snapshot_ms = None
+    last_snapshot_ms = None
     for row in tardis_rows("incremental_book_L2"):
+        ts = int(row["timestamp"]) // 1000
         if row["is_snapshot"].lower() == "true":
             tardis_snapshots += 1
+            first_snapshot_ms = ts if first_snapshot_ms is None else min(first_snapshot_ms,ts)
+            last_snapshot_ms = ts if last_snapshot_ms is None else max(last_snapshot_ms,ts)
             continue
+        first_tardis_update_ms = ts if first_tardis_update_ms is None else min(first_tardis_update_ms, ts)
+        last_tardis_update_ms = ts if last_tardis_update_ms is None else max(last_tardis_update_ms, ts)
         tardis_rows_count += 1
         key = (int(row["timestamp"]) // 1000, row["side"].lower(),
                numeric(row["price"]), numeric(row["amount"]))
@@ -161,6 +182,20 @@ def check_orderbook(directory):
     common_tx_time = sum((book_tx & tardis_counts).values())
     chd_exclusive = book - tardis_counts
     tardis_exclusive = tardis_counts - book
+    next_book = Counter()
+    next_file = pq.ParquetFile(download_chd("orderbook", directory, hour="01"))
+    for batch in next_file.iter_batches(batch_size=100_000, columns=["event_time", "event_type", "side", "price", "quantity"]):
+        data = batch.to_pydict()
+        for i, typ in enumerate(data["event_type"]):
+            if typ != "update":
+                continue
+            signature = (data["event_time"][i], data["side"][i], numeric(data["price"][i]), numeric(data["quantity"][i]))
+            if signature in tardis_exclusive:
+                next_book[signature] += 1
+    recovered_tardis_missing_next_hour = sum((next_book & tardis_exclusive).values())
+    chd_only_second_buckets = Counter()
+    for (ts, side, price, qty), count in chd_exclusive.items():
+        chd_only_second_buckets[(ts - START_MS)//1000] += count
     def bucket_counts(events):
         buckets = Counter()
         for (ts, side, price, qty), count in events.items():
@@ -171,6 +206,13 @@ def check_orderbook(directory):
         return dict(sorted(buckets.items()))
     return {
         "cryptohftdata_only_update_rows": sum(chd_exclusive.values()),
+        "tardis_missing_recovered_in_chd_next_hour": recovered_tardis_missing_next_hour,
+        "first_tardis_snapshot_ms": first_snapshot_ms,
+        "last_tardis_snapshot_ms": last_snapshot_ms,
+        "first_tardis_incremental_ms": first_tardis_update_ms,
+        "last_tardis_incremental_ms": last_tardis_update_ms,
+        "chd_extra_before_first_tardis_incremental": sum(count for (ts, *rest), count in chd_exclusive.items() if first_tardis_update_ms is not None and ts < first_tardis_update_ms),
+        "chd_only_second_buckets": dict(sorted(chd_only_second_buckets.items())),
         "tardis_only_update_rows": sum(tardis_exclusive.values()),
         "cryptohftdata_only_update_minutes": bucket_counts(chd_exclusive),
         "tardis_only_update_minutes": bucket_counts(tardis_exclusive),
