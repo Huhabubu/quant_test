@@ -75,8 +75,47 @@ jobs:
                       result["last_rows"] = last.slice(max(0, last.num_rows - 3), 3).to_pylist()
                       if kind == "orderbook":
                           from collections import Counter
-                          types = first.column("event_type").to_pylist()
-                          result["first_rowgroup_event_types"] = dict(Counter(types))
+                          counts = Counter()
+                          event_count = 0
+                          continuity_checks = 0
+                          gap_count = 0
+                          example_gaps = []
+                          last_event_key = None
+                          last_update_id = None
+                          for rg in range(pf.metadata.num_row_groups):
+                              data = pf.read_row_group(rg, columns=[
+                                  "received_time", "event_type", "final_update_id",
+                                  "prev_final_update_id"
+                              ]).to_pydict()
+                              for received, event_type, final_id, prev_id in zip(
+                                  data["received_time"], data["event_type"],
+                                  data["final_update_id"], data["prev_final_update_id"]
+                              ):
+                                  counts[event_type] += 1
+                                  key = (received, event_type, final_id)
+                                  if key == last_event_key:
+                                      continue
+                                  event_count += 1
+                                  if event_type == "snapshot":
+                                      last_update_id = None
+                                  elif event_type == "update":
+                                      if last_update_id is not None and prev_id is not None:
+                                          continuity_checks += 1
+                                          if prev_id != last_update_id:
+                                              gap_count += 1
+                                              if len(example_gaps) < 5:
+                                                  example_gaps.append({
+                                                      "timestamp": received,
+                                                      "expected_prev_final_id": last_update_id,
+                                                      "actual_prev_final_id": prev_id,
+                                                  })
+                                      last_update_id = final_id
+                                  last_event_key = key
+                          result["event_type_rows"] = dict(counts)
+                          result["distinct_orderbook_events"] = event_count
+                          result["continuity_checks"] = continuity_checks
+                          result["continuity_gaps"] = gap_count
+                          result["example_gaps"] = example_gaps
                       sample = first.slice(0, min(first.num_rows, 5000))
                       pq.write_table(sample, root / f"{symbol}_{kind}_head.parquet")
                   print(json.dumps(result, ensure_ascii=False, default=str, indent=2), flush=True)
