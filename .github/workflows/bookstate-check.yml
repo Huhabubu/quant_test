@@ -1,0 +1,24 @@
+name: Cross-provider book-state checkpoint discovery
+
+on:
+  push:
+    branches: [data-check/tardis-crosscheck]
+    paths:
+      - 'scripts/discover_solusdt_checkpoint.py'
+      - '.github/workflows/bookstate-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pyarrow
+      - run: python -u scripts/discover_solusdt_checkpoint.py
