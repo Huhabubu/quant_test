@@ -1,0 +1,104 @@
+name: CryptoHFTData SOLUSDT verification
+
+on:
+  push:
+    branches:
+      - data-check/cryptohftdata-solusdt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pyarrow
+      - name: Download and inspect one hour
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          import pyarrow.parquet as pq
+
+          root = Path("outputs")
+          root.mkdir(exist_ok=True)
+          exchange, date, hour, symbol = "binance_futures", "2026-09-02", "12", "SOLUSDT"
+          results = {}
+          for kind in ("trades", "orderbook"):
+              remote = f"{exchange}/{date}/{hour}/{symbol}_{kind}.parquet"
+              url = "https://api.cryptohftdata.com/v1/download?" + urlencode({"file": remote})
+              target = Path(f"{symbol}_{kind}.parquet")
+              result = {"remote": remote}
+              print(f"\n==== {remote} ====", flush=True)
+              try:
+                  with urlopen(Request(url, headers={"User-Agent": "quant-test-dataset-validation/1.0"}), timeout=90) as resp:
+                      result.update(
+                          http_status=resp.status,
+                          content_type=resp.headers.get("Content-Type"),
+                          content_length=resp.headers.get("Content-Length"),
+                          final_url=resp.geturl(),
+                      )
+                      total = 0
+                      with target.open("wb") as fout:
+                          while True:
+                              chunk = resp.read(1024 * 1024)
+                              if not chunk:
+                                  break
+                              total += len(chunk)
+                              if total > 650 * 1024 * 1024:
+                                  raise ValueError("Stopped: file exceeds 650 MiB inspection limit")
+                              fout.write(chunk)
+                  result["download_bytes"] = target.stat().st_size
+                  with target.open("rb") as f:
+                      signature = f.read(4)
+                  if signature != b"PAR1":
+                      raise ValueError(f"Not Parquet; first bytes={signature!r}")
+                  pf = pq.ParquetFile(target)
+                  result["rows"] = pf.metadata.num_rows
+                  result["row_groups"] = pf.metadata.num_row_groups
+                  result["columns"] = pf.schema_arrow.names
+                  if result["rows"] and result["row_groups"]:
+                      first = pf.read_row_group(0)
+                      last = pf.read_row_group(pf.metadata.num_row_groups - 1)
+                      result["first_rows"] = first.slice(0, 3).to_pylist()
+                      result["last_rows"] = last.slice(max(0, last.num_rows - 3), 3).to_pylist()
+                      if kind == "orderbook":
+                          from collections import Counter
+                          types = first.column("event_type").to_pylist()
+                          result["first_rowgroup_event_types"] = dict(Counter(types))
+                      sample = first.slice(0, min(first.num_rows, 5000))
+                      pq.write_table(sample, root / f"{symbol}_{kind}_head.parquet")
+                  print(json.dumps(result, ensure_ascii=False, default=str, indent=2), flush=True)
+              except (HTTPError, URLError, OSError, ValueError, KeyError) as e:
+                  result["error"] = repr(e)
+                  if isinstance(e, HTTPError):
+                      try:
+                          result["response_body"] = e.read(800).decode("utf-8", errors="replace")
+                      except Exception:
+                          pass
+                  print(json.dumps(result, ensure_ascii=False, default=str, indent=2), flush=True)
+              results[kind] = result
+              target.unlink(missing_ok=True)
+          (root / "report.json").write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
+          if not all("rows" in item for item in results.values()):
+              raise SystemExit("At least one dataset failed validation")
+          PY
+      - name: Upload metadata and limited samples
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cryptohftdata-solusdt-one-hour-check
+          path: outputs/
+          if-no-files-found: warn
+          retention-days: 7
