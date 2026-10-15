@@ -1,0 +1,40 @@
+name: CryptoHFTData seven-day continuous L2 audit
+
+on:
+  push:
+    branches: [data-check/tardis-crosscheck]
+    paths:
+      - 'scripts/audit_cryptohftdata_7d.py'
+      - '.github/workflows/cryptohftdata-7d-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Audit ${{ matrix.start }} through ${{ matrix.end }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - start: "2026-09-01"
+            end: "2026-09-03"
+          - start: "2026-09-03"
+            end: "2026-09-05"
+          - start: "2026-09-05"
+            end: "2026-09-08"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Parquet reader
+        run: python -m pip install pyarrow
+      - name: Audit all consecutive hours of chunk
+        run: |
+          python -u scripts/audit_cryptohftdata_7d.py \
+            --start "${{ matrix.start }}" \
+            --end "${{ matrix.end }}"
