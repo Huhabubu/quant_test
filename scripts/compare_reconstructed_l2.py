@@ -105,6 +105,7 @@ def replay_chd(temp):
     ignored_updates=0
     reset_reason=None
     next_cutoff = 0
+    apply_this_group = False
     meta = pq.ParquetFile(path)
     print("CHD_PARQUET",json.dumps({"rows":meta.metadata.num_rows, "row_groups":meta.metadata.num_row_groups}),flush=True)
     for batch in meta.iter_batches(batch_size=50_000, columns=list(cols)):
@@ -113,6 +114,7 @@ def replay_chd(temp):
             received,ts,typ,first_id,final_id,prev_id,last_id,side,price,quantity = row
             key=(received,typ,first_id,final_id,prev_id,last_id)
             if key != last_group:
+                apply_this_group = False
                 # Snapshot times are minute boundaries, so record the
                 # state only after all earlier event groups are applied.
                 while next_cutoff < len(CUTOFFS) and ts >= CUTOFFS[next_cutoff][1]:
@@ -128,6 +130,7 @@ def replay_chd(temp):
                     snapshots.append({"received_time":received,"event_time":ts,
                                       "update_id":last_id})
                     reset_reason="snapshot"
+                    apply_this_group=True
                 elif typ=="update":
                     if not valid:
                         ignored_updates+=1
@@ -140,6 +143,7 @@ def replay_chd(temp):
                         first_id is not None and final_id is not None and
                         first_id <= current_seq+1 <= final_id):
                         current_seq = final_id
+                        apply_this_group = True
                     else:
                         if len(gaps)<10:
                             gaps.append({"received_time":received,
@@ -148,14 +152,9 @@ def replay_chd(temp):
                                          "first":first_id,"final":final_id})
                         valid=False
                 last_group=key
-            if not valid or side not in ("bid","ask"):
+            if not valid or not apply_this_group or side not in ("bid","ask"):
                 continue
-            if typ == "snapshot":
-                apply_level(book, side, price, quantity)
-            elif typ == "update" and final_id is not None and (
-                current_seq == final_id):
-                # Excludes obsolete updates when snapshot was newer.
-                apply_level(book, side, price, quantity)
+            apply_level(book, side, price, quantity)
         if len(observed)==len(CUTOFFS):
             break
     return observed,{"snapshots_seen":snapshots[:12],"snapshot_count":len(snapshots),
