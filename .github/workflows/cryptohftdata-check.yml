@@ -201,6 +201,7 @@ jobs:
           num_levels = 0
           sampled_quotes = 0
           crossed_quotes = 0
+          crossed_examples = []
           first_good_quote = None
           last_quote = None
           hours = []
@@ -223,6 +224,22 @@ jobs:
                   ):
                       key = (received, typ, final_id, snap_id)
                       if key != last_key:
+                          # Sampling only at event boundaries avoids partial-delta quotes.
+                          if ready and num_events % 10000 == 0 and book["bid"] and book["ask"]:
+                              best_bid = max(book["bid"])
+                              best_ask = min(book["ask"])
+                              quote = {
+                                  "hour": hour, "received_time": received,
+                                  "best_bid": best_bid, "best_ask": best_ask,
+                                  "spread": round(best_ask - best_bid, 6)
+                              }
+                              first_good_quote = first_good_quote or quote
+                              last_quote = quote
+                              sampled_quotes += 1
+                              if best_bid >= best_ask:
+                                  crossed_quotes += 1
+                                  if len(crossed_examples) < 5:
+                                      crossed_examples.append(quote)
                           num_events += 1
                           if typ == "snapshot":
                               num_snapshots += 1
@@ -248,19 +265,6 @@ jobs:
                           book[side].pop(px, None)
                       else:
                           book[side][px] = quantity
-                      if num_levels % 100000 == 0 and book["bid"] and book["ask"]:
-                          best_bid = max(book["bid"])
-                          best_ask = min(book["ask"])
-                          quote = {
-                              "hour": hour, "received_time": received,
-                              "best_bid": best_bid, "best_ask": best_ask,
-                              "spread": round(best_ask - best_bid, 6)
-                          }
-                          first_good_quote = first_good_quote or quote
-                          last_quote = quote
-                          sampled_quotes += 1
-                          if best_bid >= best_ask:
-                              crossed_quotes += 1
               target.unlink()
           if book["bid"] and book["ask"]:
               last_quote = {"best_bid": max(book["bid"]), "best_ask": min(book["ask"]),
@@ -269,7 +273,8 @@ jobs:
               "hours": hours, "snapshot_events": num_snapshots,
               "events_seen": num_events, "processed_levels_after_snapshot": num_levels,
               "continuity_gap_examples": gaps, "sampled_quotes": sampled_quotes,
-              "crossed_quotes": crossed_quotes, "first_sampled_quote": first_good_quote,
+              "crossed_quotes": crossed_quotes, "crossed_examples": crossed_examples,
+              "first_sampled_quote": first_good_quote,
               "last_quote": last_quote,
           }
           print("REPLAY_RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
