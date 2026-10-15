@@ -1,0 +1,22 @@
+name: CryptoHFTData historical hourly HTTP diagnostics
+
+on:
+  push:
+    branches: [data-check/tardis-crosscheck]
+    paths:
+      - '.github/workflows/cryptohftdata-http-diag.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -u scripts/diagnose_audit_http.py
