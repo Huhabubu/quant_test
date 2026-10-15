@@ -15,5 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Read file sizes without saving market data
+      - name: Read PEPE contract file sizes without saving market data
+        env:
+          SYMBOLS: 1000PEPEUSDT
         run: python -u scripts/cryptohftdata_size_probe.py
