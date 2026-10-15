@@ -1,0 +1,27 @@
+name: CryptoHFTData pre-window bootstrap audit
+
+on:
+  push:
+    branches: [data-check/tardis-crosscheck]
+    paths:
+      - '.github/workflows/cryptohftdata-prior-bootstrap.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install pyarrow
+      - name: Validate August 31 to September 1 continuity
+        run: |
+          python -u scripts/audit_cryptohftdata_7d.py \
+            --start "2026-08-31" \
+            --end "2026-09-01T08:00:00"
