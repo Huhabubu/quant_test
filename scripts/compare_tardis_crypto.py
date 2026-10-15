@@ -165,14 +165,19 @@ def check_orderbook(directory):
     last_tardis_update_ms = None
     first_snapshot_ms = None
     last_snapshot_ms = None
+    first_snapshot_local_ms = None
+    first_incremental_local_ms = None
     for row in tardis_rows("incremental_book_L2"):
         ts = int(row["timestamp"]) // 1000
+        local_ms = int(row["local_timestamp"]) // 1000
         if row["is_snapshot"].lower() == "true":
             tardis_snapshots += 1
             first_snapshot_ms = ts if first_snapshot_ms is None else min(first_snapshot_ms,ts)
+            first_snapshot_local_ms = local_ms if first_snapshot_local_ms is None else min(first_snapshot_local_ms,local_ms)
             last_snapshot_ms = ts if last_snapshot_ms is None else max(last_snapshot_ms,ts)
             continue
         first_tardis_update_ms = ts if first_tardis_update_ms is None else min(first_tardis_update_ms, ts)
+        first_incremental_local_ms = local_ms if first_incremental_local_ms is None else min(first_incremental_local_ms, local_ms)
         last_tardis_update_ms = ts if last_tardis_update_ms is None else max(last_tardis_update_ms, ts)
         tardis_rows_count += 1
         key = (int(row["timestamp"]) // 1000, row["side"].lower(),
@@ -208,6 +213,8 @@ def check_orderbook(directory):
         "cryptohftdata_only_update_rows": sum(chd_exclusive.values()),
         "tardis_missing_recovered_in_chd_next_hour": recovered_tardis_missing_next_hour,
         "first_tardis_snapshot_ms": first_snapshot_ms,
+        "first_tardis_snapshot_local_ms": first_snapshot_local_ms,
+        "first_tardis_incremental_local_ms": first_incremental_local_ms,
         "last_tardis_snapshot_ms": last_snapshot_ms,
         "first_tardis_incremental_ms": first_tardis_update_ms,
         "last_tardis_incremental_ms": last_tardis_update_ms,
