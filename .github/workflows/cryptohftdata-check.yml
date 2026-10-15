@@ -133,6 +133,53 @@ jobs:
           if not all("rows" in item for item in results.values()):
               raise SystemExit("At least one dataset failed validation")
           PY
+      - name: Find previous orderbook checkpoint
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+          import pyarrow as pa
+          import pyarrow.compute as pc
+          import pyarrow.parquet as pq
+
+          path = Path("outputs")
+          scan = []
+          for hour in range(11, -1, -1):
+              source = f"binance_futures/2026-09-02/{hour:02d}/SOLUSDT_orderbook.parquet"
+              url = "https://api.cryptohftdata.com/v1/download?" + urlencode({"file": source})
+              target = Path("previous_hour.parquet")
+              entry = {"hour": f"{hour:02d}", "source": source}
+              try:
+                  with urlopen(Request(url, headers={"User-Agent": "quant-test-dataset-validation/1.0"}), timeout=90) as resp:
+                      with target.open("wb") as fp:
+                          while chunk := resp.read(1024 * 1024):
+                              fp.write(chunk)
+                  pf = pq.ParquetFile(target)
+                  entry["bytes"] = target.stat().st_size
+                  entry["rows"] = pf.metadata.num_rows
+                  snapshot_rows = 0
+                  for rg in range(pf.metadata.num_row_groups):
+                      types = pf.read_row_group(rg, columns=["event_type"]).column(0)
+                      snapshot_rows += int(pc.sum(pc.cast(pc.equal(types, pa.scalar("snapshot")), pa.int64())).as_py() or 0)
+                  entry["snapshot_rows"] = snapshot_rows
+                  scan.append(entry)
+                  print(json.dumps(entry), flush=True)
+                  if snapshot_rows:
+                      print("CHECKPOINT FOUND", flush=True)
+                      break
+              except Exception as exc:
+                  entry["error"] = repr(exc)
+                  scan.append(entry)
+                  print(json.dumps(entry), flush=True)
+              finally:
+                  target.unlink(missing_ok=True)
+          (path / "checkpoint_scan.json").write_text(
+              json.dumps(scan, indent=2), encoding="utf-8"
+          )
+          PY
       - name: Upload metadata and limited samples
         if: always()
         uses: actions/upload-artifact@v4
