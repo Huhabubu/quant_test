@@ -56,7 +56,7 @@ def compare_book(tardis, crypto):
     out = {"best_tardis": book_best(tardis), "best_crypto": book_best(crypto),
            "levels_tardis": {s: len(tardis[s]) for s in ("bid", "ask")},
            "levels_crypto": {s: len(crypto[s]) for s in ("bid", "ask")}}
-    for n in (20, 100):
+    for n in (20, 100, 200, 500):
         for side in ("bid", "ask"):
             t, c = levels(tardis, side, n), levels(crypto, side, n)
             # Both sequences compare side-by-side by rank, and also by the
