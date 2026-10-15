@@ -124,6 +124,7 @@ class Audit:
                 self.last_quote_check_minute = minute
                 self.quote(recv)
         self.group = None
+        self.group_key = None
 
     def top_levels(self, n):
         return (
