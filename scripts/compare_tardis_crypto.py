@@ -102,7 +102,17 @@ def check_trades(directory):
         if counterpart == sample:
             matches += 1
 
+    extra_trade_times = [trades[x][0] for x in trades.keys() - unique]
+    extra_trade_buckets = Counter(
+        "before_hour" if t < START_MS else
+        "after_hour" if t >= END_MS else
+        f"minute_{(t - START_MS) // 60000:02d}"
+        for t in extra_trade_times
+    )
     return {
+        "cryptohftdata_extra_by_exchange_minute": dict(sorted(extra_trade_buckets.items())),
+        "cryptohftdata_extra_first_timestamp_ms": min(extra_trade_times, default=None),
+        "cryptohftdata_extra_last_timestamp_ms": max(extra_trade_times, default=None),
         "cryptohftdata_rows": chd_count,
         "tardis_rows": tardis_count,
         "common_trade_ids": id_only,
@@ -149,7 +159,21 @@ def check_orderbook(directory):
         tardis_counts[key] += 1
     common_event_time = sum((book & tardis_counts).values())
     common_tx_time = sum((book_tx & tardis_counts).values())
+    chd_exclusive = book - tardis_counts
+    tardis_exclusive = tardis_counts - book
+    def bucket_counts(events):
+        buckets = Counter()
+        for (ts, side, price, qty), count in events.items():
+            label = ("before_hour" if ts < START_MS else
+                     "after_hour" if ts >= END_MS else
+                     f"minute_{(ts - START_MS) // 60000:02d}")
+            buckets[label] += count
+        return dict(sorted(buckets.items()))
     return {
+        "cryptohftdata_only_update_rows": sum(chd_exclusive.values()),
+        "tardis_only_update_rows": sum(tardis_exclusive.values()),
+        "cryptohftdata_only_update_minutes": bucket_counts(chd_exclusive),
+        "tardis_only_update_minutes": bucket_counts(tardis_exclusive),
         "cryptohftdata_update_rows": rows,
         "tardis_update_rows": tardis_rows_count,
         "cryptohftdata_snapshot_rows": snapshots,
