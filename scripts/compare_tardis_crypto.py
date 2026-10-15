@@ -212,6 +212,8 @@ def check_orderbook(directory):
         "first_tardis_incremental_ms": first_tardis_update_ms,
         "last_tardis_incremental_ms": last_tardis_update_ms,
         "chd_extra_before_first_tardis_incremental": sum(count for (ts, *rest), count in chd_exclusive.items() if first_tardis_update_ms is not None and ts < first_tardis_update_ms),
+        "chd_extra_at_or_before_tardis_snapshot": sum(count for (ts, *rest), count in chd_exclusive.items() if first_snapshot_ms is not None and ts <= first_snapshot_ms),
+        "chd_extra_after_snapshot_before_first_incremental": sum(count for (ts, *rest), count in chd_exclusive.items() if first_snapshot_ms is not None and first_tardis_update_ms is not None and first_snapshot_ms < ts < first_tardis_update_ms),
         "chd_only_second_buckets": dict(sorted(chd_only_second_buckets.items())),
         "tardis_only_update_rows": sum(tardis_exclusive.values()),
         "cryptohftdata_only_update_minutes": bucket_counts(chd_exclusive),
