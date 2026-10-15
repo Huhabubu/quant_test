@@ -1,0 +1,25 @@
+name: Independently reconstruct and compare SOLUSDT L2 books
+
+on:
+  push:
+    branches: [data-check/tardis-crosscheck]
+    paths:
+      - 'scripts/compare_reconstructed_l2.py'
+      - '.github/workflows/reconstructed-book-compare.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 23
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pyarrow
+      - name: Replay independent books and compare top levels
+        run: python -u scripts/compare_reconstructed_l2.py
