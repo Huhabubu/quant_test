@@ -1,0 +1,27 @@
+name: CryptoHFTData legacy Zstd archive integrity
+
+on:
+  push:
+    branches: [data-check/tardis-crosscheck]
+    paths:
+      - '.github/workflows/cryptohftdata-legacy.yml'
+      - 'scripts/audit_cryptohftdata_legacy.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan-august:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install pyarrow zstandard
+      - name: Decompress and audit 2026-08-01 24h L2
+        run: |
+          python -u scripts/audit_cryptohftdata_legacy.py \
+            --start "2026-08-01" --end "2026-08-02"
