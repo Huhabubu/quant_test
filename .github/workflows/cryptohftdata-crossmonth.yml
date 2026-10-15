@@ -1,0 +1,36 @@
+name: CryptoHFTData cross-month L2 spot checks
+
+on:
+  push:
+    branches: [data-check/tardis-crosscheck]
+    paths:
+      - '.github/workflows/cryptohftdata-crossmonth.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Audit ${{ matrix.start }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - start: "2026-08-01"
+            end: "2026-08-02"
+          - start: "2026-10-01"
+            end: "2026-10-02"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install pyarrow
+      - name: Check full 24-hour market-data files and sequence
+        run: |
+          python -u scripts/audit_cryptohftdata_7d.py \
+            --start "${{ matrix.start }}" \
+            --end "${{ matrix.end }}"
