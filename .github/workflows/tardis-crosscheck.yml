@@ -1,0 +1,24 @@
+name: Tardis vs CryptoHFTData SOLUSDT crosscheck
+
+on:
+  push:
+    branches:
+      - data-check/tardis-crosscheck
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Dependencies
+        run: python -m pip install pyarrow
+      - name: Compare first hour of free Tardis day
+        run: python -u scripts/compare_tardis_crypto.py
