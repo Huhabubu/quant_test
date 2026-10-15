@@ -180,6 +180,103 @@ jobs:
               json.dumps(scan, indent=2), encoding="utf-8"
           )
           PY
+      - name: Replay SOLUSDT book from prior checkpoint
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          import pyarrow.parquet as pq
+
+          book = {"bid": {}, "ask": {}}
+          ready = False
+          last_key = None
+          prior_update_id = None
+          gaps = []
+          num_snapshots = 0
+          num_events = 0
+          num_levels = 0
+          sampled_quotes = 0
+          crossed_quotes = 0
+          first_good_quote = None
+          last_quote = None
+          hours = []
+          cols = ["received_time", "event_type", "final_update_id",
+                  "prev_final_update_id", "last_update_id", "side", "price", "quantity"]
+          for hour in range(7, 13):
+              remote = f"binance_futures/2026-09-02/{hour:02d}/SOLUSDT_orderbook.parquet"
+              url = "https://api.cryptohftdata.com/v1/download?" + urlencode({"file": remote})
+              target = Path("book_hour.parquet")
+              with urlopen(Request(url, headers={"User-Agent": "quant-test-dataset-validation/1.0"}), timeout=90) as resp:
+                  with target.open("wb") as fp:
+                      while chunk := resp.read(1024 * 1024):
+                          fp.write(chunk)
+              pf = pq.ParquetFile(target)
+              hours.append({"hour": hour, "rows": pf.metadata.num_rows})
+              for rg in range(pf.metadata.num_row_groups):
+                  data = pf.read_row_group(rg, columns=cols).to_pydict()
+                  for received, typ, final_id, prev_id, snap_id, side, price, qty in zip(
+                      *(data[k] for k in cols)
+                  ):
+                      key = (received, typ, final_id, snap_id)
+                      if key != last_key:
+                          num_events += 1
+                          if typ == "snapshot":
+                              num_snapshots += 1
+                              ready = True
+                              book["bid"].clear()
+                              book["ask"].clear()
+                              prior_update_id = None
+                          elif typ == "update":
+                              if prior_update_id is not None and prev_id is not None:
+                                  if prior_update_id != prev_id and len(gaps) < 20:
+                                      gaps.append({
+                                          "hour": hour, "received_time": received,
+                                          "expected_prev_id": prior_update_id,
+                                          "actual_prev_id": prev_id
+                                      })
+                              prior_update_id = final_id
+                          last_key = key
+                      if not ready or side not in book:
+                          continue
+                      num_levels += 1
+                      px, quantity = float(price), float(qty)
+                      if quantity == 0:
+                          book[side].pop(px, None)
+                      else:
+                          book[side][px] = quantity
+                      if num_levels % 100000 == 0 and book["bid"] and book["ask"]:
+                          best_bid = max(book["bid"])
+                          best_ask = min(book["ask"])
+                          quote = {
+                              "hour": hour, "received_time": received,
+                              "best_bid": best_bid, "best_ask": best_ask,
+                              "spread": round(best_ask - best_bid, 6)
+                          }
+                          first_good_quote = first_good_quote or quote
+                          last_quote = quote
+                          sampled_quotes += 1
+                          if best_bid >= best_ask:
+                              crossed_quotes += 1
+              target.unlink()
+          if book["bid"] and book["ask"]:
+              last_quote = {"best_bid": max(book["bid"]), "best_ask": min(book["ask"]),
+                            "spread": round(min(book["ask"]) - max(book["bid"]), 6)}
+          result = {
+              "hours": hours, "snapshot_events": num_snapshots,
+              "events_seen": num_events, "processed_levels_after_snapshot": num_levels,
+              "continuity_gap_examples": gaps, "sampled_quotes": sampled_quotes,
+              "crossed_quotes": crossed_quotes, "first_sampled_quote": first_good_quote,
+              "last_quote": last_quote,
+          }
+          print("REPLAY_RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
+          Path("outputs/replay_report.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+          if not ready or crossed_quotes or gaps or not last_quote or last_quote["spread"] <= 0:
+              raise SystemExit("Replay integrity checks failed")
+          PY
       - name: Upload metadata and limited samples
         if: always()
         uses: actions/upload-artifact@v4
