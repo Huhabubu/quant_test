@@ -71,10 +71,27 @@ def compare_book(tardis, crypto):
                           for i in range(n)
                           if not (i<len(t) and i<len(c) and t[i][0] == c[i][0] and
                                   abs(t[i][1]-c[i][1]) < 1e-9)]
+            # Distinguish depth-window coverage from contradictions at a
+            # price level that both collectors actually know.
+            t_by_price, c_by_price = dict(t), dict(c)
+            shared_prices = t_by_price.keys() & c_by_price.keys()
+            differing_quantities = [p for p in shared_prices
+                                    if abs(t_by_price[p]-c_by_price[p])>=1e-9]
+            only_tardis = sorted(t_by_price.keys()-c_by_price.keys(),
+                                 reverse=(side=="bid"))
+            only_chd = sorted(c_by_price.keys()-t_by_price.keys(),
+                              reverse=(side=="bid"))
             out[f"{side}_top{n}"] = {
                 "exact_rank_matches": match_at_rank, "compared_ranks": n,
                 "all_equal": not mismatches,
-                "mismatch_count": len(mismatches), "first_mismatches": mismatches[:4]}
+                "mismatch_count": len(mismatches), "first_mismatches": mismatches[:4],
+                "shared_prices": len(shared_prices),
+                "shared_price_quantity_disagreements": len(differing_quantities),
+                "first_quantity_disagreements": differing_quantities[:5],
+                "tardis_only_prices": len(only_tardis),
+                "chd_only_prices": len(only_chd),
+                "tardis_only_price_examples": only_tardis[:5],
+                "chd_only_price_examples": only_chd[:5]}
     return out
 
 
