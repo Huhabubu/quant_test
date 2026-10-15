@@ -4,13 +4,14 @@ Only opens file headers and reads zero market-data bytes.
 Results are aggregate size estimates, not guaranteed future growth rates.
 """
 import json
+import os
 import time
 import statistics
 from collections import defaultdict
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-SYMBOLS=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","PEPEUSDT"]
+SYMBOLS=os.environ.get("SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT,ADAUSDT,1000PEPEUSDT").split(",")
 DATES=["2026-09-01","2026-09-03","2026-09-07"]
 HOURS=["00","12","20"]
 TYPES=["orderbook","trades"]
