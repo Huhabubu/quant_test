@@ -1,0 +1,53 @@
+name: CHD daily archive A B1 B2 C benchmark
+on:
+  push:
+    branches: [data-check/chd-daily-archive-benchmark]
+    paths:
+      - 'scripts/chd_daily_archive_benchmark.py'
+      - '.github/workflows/chd-daily-archive-benchmark.yml'
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "Binance Futures symbol"
+        required: false
+        default: "SOLUSDT"
+        type: string
+      day:
+        description: "UTC date"
+        required: false
+        default: "2026-09-01"
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: chd-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CHD_SYMBOL: ${{ inputs.symbol || 'SOLUSDT' }}
+      CHD_DAY: ${{ inputs.day || '2026-09-01' }}
+      CHD_OUT: archive_benchmark_result.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Parquet and NPZ benchmarking dependencies
+        run: python -m pip install --disable-pip-version-check numpy pyarrow zstandard
+      - name: Print runner storage and test target
+        run: |
+          df -h .
+          echo "symbol=$CHD_SYMBOL day=$CHD_DAY"
+      - name: Compare daily archive formats without retaining raw data
+        run: python -u scripts/chd_daily_archive_benchmark.py
+      - name: Upload only small summary JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-archive-benchmark-result
+          path: archive_benchmark_result.json
+          if-no-files-found: ignore
+          retention-days: 14
