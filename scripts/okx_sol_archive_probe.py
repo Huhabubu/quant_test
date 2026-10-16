@@ -21,12 +21,12 @@ def fetch(url, limit, ranged=False):
 def preview(prefix):
     """Inspect decompressed prefix in memory; never extract an archive to disk."""
     try:
-        if prefix.startswith(b"\\x1f\\x8b"):
+        if prefix.startswith(b"\x1f\x8b"):
             expanded = zlib.decompressobj(31).decompress(prefix, 262144)
-            name = expanded[:100].split(b"\\0")[0].decode("utf-8", "replace")
+            name = expanded[:100].split(b"\0")[0].decode("utf-8", "replace")
             sample = expanded[512:16384] if len(expanded) > 512 else b""
             print("Archive: gzip/tar; first tar member:", repr(name))
-        elif prefix.startswith(b"PK\\x03\\x04") and len(prefix) > 30:
+        elif prefix.startswith(b"PK\x03\x04") and len(prefix) > 30:
             method = struct.unpack_from("<H", prefix, 8)[0]
             nlen, elen = struct.unpack_from("<HH", prefix, 26)
             start = 30 + nlen + elen
