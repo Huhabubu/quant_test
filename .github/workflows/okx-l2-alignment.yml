@@ -1,0 +1,29 @@
+name: OKX L2 snapshot alignment diagnosis
+on:
+  pull_request:
+    paths:
+      - scripts/okx_sol_l2_time_alignment.py
+      - .github/workflows/okx-l2-alignment.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  alignment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check script syntax
+        run: python -m py_compile scripts/okx_sol_l2_time_alignment.py
+      - name: Evaluate plus-or-minus 250 ms snapshot alignment
+        run: python scripts/okx_sol_l2_time_alignment.py
+      - name: Archive comparison report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: okx-l2-alignment-report
+          path: reports/okx_sol_l2_alignment_2026-09-02.json
+          if-no-files-found: warn

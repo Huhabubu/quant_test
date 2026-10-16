@@ -1,0 +1,37 @@
+name: OKX SOL archive probe
+on:
+  pull_request:
+    paths:
+      - scripts/okx_sol_archive_probe.py
+      - scripts/okx_sol_day_audit.py
+      - scripts/okx_sol_l2_replay_audit.py
+      - scripts/okx_sol_l2_report_digest.py
+      - .github/workflows/okx-sol-archive-probe.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check public OKX historical file listings and bounded byte ranges
+        run: python scripts/okx_sol_archive_probe.py
+      - name: Stream and audit complete 2026-09-02 L2 and trade archives
+        run: python scripts/okx_sol_day_audit.py
+      - name: Reconstruct L2 and compare 96 periodic snapshots
+        run: python scripts/okx_sol_l2_replay_audit.py
+      - name: Print snapshot consistency diagnostics
+        run: python scripts/okx_sol_l2_report_digest.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: okx-sol-l2-snapshot-comparison
+          path: |
+            reports/okx_sol_l2_*.json
+            reports/okx_sol_l2_*.csv
+          if-no-files-found: warn
