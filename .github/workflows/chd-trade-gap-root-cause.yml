@@ -1,0 +1,29 @@
+name: SOLUSDT trade gap root cause versus Binance and Tardis
+on:
+  push:
+    branches: [data-check/chd-trade-gap-root-cause]
+    paths:
+      - 'scripts/chd_trade_gap_root_cause.py'
+      - '.github/workflows/chd-trade-gap-root-cause.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  independent-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --disable-pip-version-check pyarrow zstandard
+      - run: python -u scripts/chd_trade_gap_root_cause.py
+      - name: Publish audit summary (never original data)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solusdt-gap-root-cause-summary
+          path: trade_gap_root_cause.json
+          retention-days: 14
+          if-no-files-found: ignore
