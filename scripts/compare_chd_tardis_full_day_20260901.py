@@ -102,8 +102,8 @@ def compare_levels(lhs, rhs, sizes=TOP):
     return out
 
 
-def download_chd_hour(hour, target):
-    rel=f"binance_futures/{DAY}/{hour:02d}/{SYMBOL}_orderbook.parquet"
+def download_chd_hour(date, hour, target):
+    rel=f"binance_futures/{date}/{hour:02d}/{SYMBOL}_orderbook.parquet"
     url="https://api.cryptohftdata.com/v1/download?"+urlencode({"file":rel})
     request=Request(url,headers={"User-Agent":"quant-test-full-day-book-comparison/1.0"})
     size=0
@@ -147,10 +147,15 @@ def chd_groups(paths):
 
 
 def reconstruct_chd(folder):
-    paths=[folder/f"{h:02d}_orderbook.parquet" for h in range(24)]
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        sizes=list(ex.map(lambda h:download_chd_hour(h,paths[h]),range(24)))
-    print("CHD_DOWNLOAD_TOTAL",sum(sizes),flush=True)
+    # Reuse the independently audited Aug-31 07:44 valid source snapshot
+    # to anchor Sep-01 midnight, rather than discarding 00:00-07:34.
+    periods=[("2026-08-31",h) for h in range(7,24)]
+    periods += [(DAY,h) for h in range(24)]
+    paths=[folder/f"{date}_{h:02d}_orderbook.parquet" for date,h in periods]
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        sizes=list(ex.map(lambda a:download_chd_hour(a[1][0],a[1][1],paths[a[0]]),
+                          enumerate(periods)))
+    print("CHD_DOWNLOAD_TOTAL",sum(sizes),"hours",len(periods),flush=True)
     book=new_book()
     meta={"snapshots":0,"groups":0,"last_event_ts":None}
     observations={}
@@ -234,7 +239,7 @@ def reconstruct_chd(folder):
             if len(gaps)<100:
                 gaps.append({"time":format_ts(ts),"reason":"unknown_type","typ":typ})
     insert_cuts(END)
-    summary={"hours":24,"raw_bytes":sum(sizes),
+    summary={"hours":24,"prewindow_hours":17,"first_bootstrap_search_start":"2026-08-31T07:00:00Z","raw_bytes":sum(sizes),
              "groups":meta["groups"],"snapshots":snapshots,
              "duplicate_snapshots":duplicates,"accepted_update_groups":accepted_groups,
              "ignored_before_bootstrap_or_gap":ignored,
@@ -243,6 +248,7 @@ def reconstruct_chd(folder):
              "bridging_without_prev_match":bridged_without_matching_pu,
              "event_time_reversals":ts_backwards,
              "snapshot_self_checks":len(self_comparisons),
+             "snapshot_self_top_exact":{str(n):sum(item["comparisons"][str(n)]["both_sides_exact"] for item in self_comparisons) for n in TOP},
              "valid_15min_checkpoints":sum(o["valid"] for o in observations.values()),
              "total_15min_checkpoints":len(observations)}
     print("CHD_SUMMARY",json.dumps(summary),flush=True)
@@ -378,7 +384,9 @@ def main():
                    "chd_only_prices_across_cutoffs":sum(r["comparison"][str(n)]["rhs_only_prices"] for r in compared),
                } for n in TOP},
                "chd_self_snapshots_checked":len(chd_self),
+               "chd_self_top_exact":{str(n):sum(r["comparisons"][str(n)]["both_sides_exact"] for r in chd_self) for n in TOP},
                "tardis_self_snapshots_checked":len(tardis_self),
+               "tardis_self_top_exact":{str(n):sum(r["comparisons"][str(n)]["both_sides_exact"] for r in tardis_self) for n in TOP},
                "elapsed_seconds":round(perf_counter()-t0,1),
                "limitations":["Snapshots between collectors have different startup depth and received-time ordering",
                               "Tardis is free 2026-09-01 only; not a substitute for missing 2026-09-02 L2",
