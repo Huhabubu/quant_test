@@ -99,6 +99,38 @@ def choose(candidates):
         abs(x["lag_ms"]), x["phase"] != "pre"))
 
 
+
+
+def targets_at_snapshot(book, snap):
+    """For prices mismatched at T, remember the authoritative snapshot value."""
+    targets = {}
+    signed = Counter()
+    for side in SIDES:
+        targets[side] = {}
+        for price, observed in snap[side].items():
+            current = book[side].get(price)
+            if current is None or current[0] != observed[0]:
+                targets[side][price] = observed
+                if current is None:
+                    signed["missing_price"] += 1
+                elif current[0] > observed[0]:
+                    signed["reconstructed_qty_greater"] += 1
+                else:
+                    signed["reconstructed_qty_less"] += 1
+    return targets, dict(signed)
+
+
+def record_target_matches(book, p):
+    """A per-level comparison: no requirement for all prices to match at once."""
+    for side in SIDES:
+        for price, expected in p["targets"][side].items():
+            current = book[side].get(price)
+            key = (side, price)
+            if current is not None and current[0] == expected[0]:
+                p["ever_qty"].add(key)
+                if current[1] == expected[1]:
+                    p["ever_qty_order"].add(key)
+
 def audit():
     archives = [a for a in files(4, DAY, DAY)
                 if a["filename"].endswith(DAY + ".tar.gz")
@@ -121,7 +153,12 @@ def audit():
         best = choose(candidates)
         past = choose([x for x in candidates if x["phase"] in ("pre", "past")])
         future = choose([x for x in candidates if x["phase"] in ("pre", "future")])
+        target_count = sum(len(v) for v in p["targets"].values())
         checks.append(dict(
+            baseline_qty_target_count=target_count,
+            baseline_qty_target_recovered_anywhere=len(p["ever_qty"]),
+            baseline_qty_target_recovered_exact=len(p["ever_qty_order"]),
+            baseline_qty_target_signed=p["signed"],
             index=p["index"], utc=datetime.fromtimestamp(
                 p["ts"] / 1000, tz=timezone.utc).isoformat(timespec="milliseconds"),
             baseline=base, best=best, best_past=past, best_future=future,
@@ -179,18 +216,22 @@ def audit():
                             continue
                         if pending is not None:
                             raise RuntimeError("Unexpected consecutive snapshots")
+                        targets, signed = targets_at_snapshot(book, snap)
                         base = compare(book, snap, 0, "pre")
                         candidates = [base]
                         working = {side: x.copy() for side, x in book.items()}
+                        target_tracking = dict(targets=targets, ever_qty=set(),
+                                               ever_qty_order=set())
                         for prior_ts, undo in reversed(history):
                             if ts - prior_ts > WINDOW:
                                 break
                             reverse_update(working, undo)
                             candidates.append(compare(
                                 working, snap, prior_ts - ts, "past"))
+                            record_target_matches(working, target_tracking)
                         pending = dict(index=snap_count - 1, ts=ts, snap=snap,
                                        candidates=candidates, baseline=base,
-                                       after_events=[])
+                                       after_events=[], signed=signed, **target_tracking)
                     elif action == "update":
                         update_count += 1
                         undo = apply_update(book, evt)
@@ -199,6 +240,7 @@ def audit():
                             pending["candidates"].append(
                                 compare(book, pending["snap"],
                                         ts - pending["ts"], "future"))
+                            record_target_matches(book, pending)
                         else:
                             history.append((ts, undo))
                             while history and history[0][0] < ts - WINDOW:
@@ -235,6 +277,10 @@ def audit():
         best_negative=sum(r["best"]["lag_ms"] < 0 for r in checks),
         best_zero=sum(r["best"]["lag_ms"] == 0 for r in checks),
         best_qty_zero=sum(r["best"]["qty_errors"] == 0 for r in checks),
+        baseline_mismatched_level_observations=sum(r["baseline_qty_target_count"] for r in checks),
+        mismatched_levels_ever_seen_at_snapshot_qty=sum(r["baseline_qty_target_recovered_anywhere"] for r in checks),
+        mismatched_levels_ever_seen_at_snapshot_qty_and_orders=sum(r["baseline_qty_target_recovered_exact"] for r in checks),
+        quantity_difference_sign_counts=dict(sum((Counter(r["baseline_qty_target_signed"]) for r in checks), Counter())),
         not_proof_of_feed_completeness=True,
     )
     OUT.parent.mkdir(exist_ok=True)
