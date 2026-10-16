@@ -28,6 +28,14 @@ def check(label, module, start, end):
         print("OKX code:", response.get("code"), "message:", response.get("msg"))
         if response.get("code") != "0":
             return False
+        print("Response data count:", len(response.get("data", [])))
+        for batch in response.get("data", [])[:2]:
+            print("Batch fields:", list(batch), "totalSizeMB:", batch.get("totalSizeMB"))
+            print("Group count:", len(batch.get("details", [])))
+            for group in batch.get("details", [])[:4]:
+                print("Group fields:", list(group), "instId:", group.get("instId"),
+                      "instFamily:", group.get("instFamily"),
+                      "file_count:", len(group.get("groupDetails", [])))
         files = [(group, item)
                  for batch in response.get("data", [])
                  for group in batch.get("details", [])
