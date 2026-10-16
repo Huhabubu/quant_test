@@ -1,0 +1,32 @@
+name: CHD BTCUSDT daily archive format benchmark
+on:
+  push:
+    branches: [data-check/chd-daily-archive-benchmark]
+    paths:
+      - '.github/workflows/chd-daily-btc-benchmark.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  btc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CHD_SYMBOL: BTCUSDT
+      CHD_DAY: 2026-09-01
+      CHD_OUT: archive_benchmark_btc_result.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --disable-pip-version-check numpy pyarrow zstandard
+      - run: python -u scripts/chd_daily_archive_benchmark.py
+      - name: Save summary only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc-daily-archive-benchmark-result
+          path: archive_benchmark_btc_result.json
+          if-no-files-found: ignore
+          retention-days: 14
