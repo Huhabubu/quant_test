@@ -1,0 +1,29 @@
+name: CHD cross-day book snapshots and trade audit
+on:
+  push:
+    branches: [data-check/chd-crossday-chain-test]
+    paths:
+      - 'scripts/chd_cross_day_chain_and_trades.py'
+      - '.github/workflows/chd-cross-day-chain.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --disable-pip-version-check pyarrow
+      - run: python -u scripts/chd_cross_day_chain_and_trades.py
+      - name: Upload only aggregated audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chd-3day-book-and-trade-audit-summary
+          path: chain_audit_result.json
+          if-no-files-found: ignore
+          retention-days: 14
