@@ -182,6 +182,8 @@ def work():
             s["download_plus_api_spacing_seconds"]="included in per-stream times and day wall clock"
             s["megabytes"]=round(s["download_bytes"]/1_000_000,2)
             s["anchor_status"]="verified" if s["initial"]["valid"] and s["final"]["valid"] and s["stats"].get("chain_gaps",0)==0 else "partial"
+            s["archive_status"]="verified" if (s["anchor_status"]=="verified" and s["trade_id_gap_groups"]==0 and s["trade_id_nonincreasing"]==0) else "partial"
+            s["archive_status_note"]="anchor_status only audits L2 state; trade-id holes downgrade full day to partial"
             s["book_chain_valid_through_day"]=(s["initial"]["valid"] and
                 s["final"]["valid"] and s["stats"].get("chain_gaps",0)==0)
             report["days_report"].append(s)
