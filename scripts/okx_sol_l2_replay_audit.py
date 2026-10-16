@@ -117,6 +117,7 @@ def audit():
                     ts = int(event["ts"])
                     if prior_ts is not None and ts < prior_ts:
                         violations += 1
+                    previous_message_ts = prior_ts
                     prior_ts = ts
                     action = event["action"]
                     if action == "snapshot":
@@ -126,6 +127,7 @@ def audit():
                                 "timestamp": ts,
                                 "utc": iso(ts),
                                 "updates_since_previous": updates - last_updates,
+                                "ms_since_previous_message": ts - previous_message_ts if previous_message_ts is not None else None,
                                 "bids": side_check(books["bids"], parsed_levels(event["bids"]), True),
                                 "asks": side_check(books["asks"], parsed_levels(event["asks"]), False),
                             }
