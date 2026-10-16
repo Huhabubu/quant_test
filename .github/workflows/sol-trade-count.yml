@@ -1,0 +1,20 @@
+name: SOL raw trade counts OKX vs Binance
+on:
+  pull_request:
+    paths:
+      - scripts/okx_vs_binance_sol_trade_count.py
+      - .github/workflows/sol-trade-count.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Count both exchanges raw trades for UTC day
+        run: python scripts/okx_vs_binance_sol_trade_count.py
