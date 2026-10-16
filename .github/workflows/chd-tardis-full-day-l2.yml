@@ -1,0 +1,33 @@
+name: 2026-09-01 Binance SOLUSDT CHD versus Tardis full-day L2 replay
+on:
+  push:
+    branches:
+      - data-check/chd-tardis-sep01-fullbook
+    paths:
+      - scripts/compare_chd_tardis_full_day_20260901.py
+      - .github/workflows/chd-tardis-full-day-l2.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install pyarrow
+      - name: Compile full-day replay code
+        run: python -m py_compile scripts/compare_chd_tardis_full_day_20260901.py
+      - name: Download and reconstruct both raw feeds, compare 95 UTC cutoffs
+        run: python -u scripts/compare_chd_tardis_full_day_20260901.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: solusdt-sep01-tardis-chd-replay-report
+          path: |
+            reports/solusdt_chd_tardis_full_day_2026-09-01.json
+            reports/solusdt_chd_tardis_full_day_2026-09-01.csv
+          if-no-files-found: warn
