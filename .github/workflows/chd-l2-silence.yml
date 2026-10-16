@@ -1,0 +1,21 @@
+name: CHD L2 silent span and snapshot verification
+on:
+  push:
+    branches: [data-check/chd-trade-gap-root-cause]
+    paths:
+      - 'scripts/chd_l2_max_gap.py'
+      - '.github/workflows/chd-l2-silence.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --disable-pip-version-check pyarrow
+      - run: python -u scripts/chd_l2_max_gap.py
