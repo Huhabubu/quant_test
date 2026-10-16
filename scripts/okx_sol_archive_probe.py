@@ -39,7 +39,7 @@ def check(label, module, start, end):
         files = [(group, item)
                  for batch in response.get("data", [])
                  for group in batch.get("details", [])
-                 if group.get("instId") == "SOL-USDT-SWAP"
+                 if group.get("instFamily") == "SOL-USDT"
                  for item in group.get("groupDetails", [])]
         print("Files found:", len(files))
         for group, item in files[:5]:
