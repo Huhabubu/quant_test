@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse
 from urllib.error import HTTPError, URLError
-import json, sys
+import json, sys, zlib, struct
 
 API = "https://www.okx.com/api/v5/public/market-data-history"
 
@@ -16,6 +16,32 @@ def fetch(url, limit, ranged=False):
         headers["Range"] = f"bytes=0-{limit-1}"
     with urlopen(Request(url, headers=headers), timeout=25) as r:
         return r.status, dict(r.headers), r.read(limit)
+
+
+def preview(prefix):
+    """Inspect decompressed prefix in memory; never extract an archive to disk."""
+    try:
+        if prefix.startswith(b"\\x1f\\x8b"):
+            expanded = zlib.decompressobj(31).decompress(prefix, 262144)
+            name = expanded[:100].split(b"\\0")[0].decode("utf-8", "replace")
+            sample = expanded[512:16384] if len(expanded) > 512 else b""
+            print("Archive: gzip/tar; first tar member:", repr(name))
+        elif prefix.startswith(b"PK\\x03\\x04") and len(prefix) > 30:
+            method = struct.unpack_from("<H", prefix, 8)[0]
+            nlen, elen = struct.unpack_from("<HH", prefix, 26)
+            start = 30 + nlen + elen
+            name = prefix[30:30+nlen].decode("utf-8", "replace")
+            sample = zlib.decompressobj(-15).decompress(prefix[start:], 262144) if method == 8 else prefix[start:start+4096]
+            print("Archive: ZIP; first member:", repr(name), "compression:", method)
+        else:
+            print("Unrecognized archive signature")
+            return
+        lines = sample.decode("utf-8", "replace").splitlines()[:3]
+        for line in lines:
+            print("Decoded sample:", line[:260])
+        print("Prefix has seqId/prevSeqId:", b"seqId" in sample, b"prevSeqId" in sample)
+    except Exception as exc:
+        print("Bounded prefix decode unavailable:", type(exc).__name__, str(exc)[:160])
 
 def check(label, module, start, end):
     params = dict(module=str(module), instType="SWAP", dateAggrType="daily",
@@ -47,16 +73,21 @@ def check(label, module, start, end):
                   "dateTs=", item.get("dateTs"))
         if not files:
             return False
-        url = files[0][1].get("url", "")
-        parsed = urlparse(url)
-        if parsed.scheme != "https" or not parsed.netloc:
-            print("Invalid or missing file URL")
-            return False
-        print("Download host:", parsed.netloc, "(query string not logged)")
-        status, headers, prefix = fetch(url, 131072, ranged=True)
-        print("Download HTTP:", status, "range:", headers.get("Content-Range"),
-              "bytes_read:", len(prefix), "signature:", prefix[:8].hex())
-        return status in (200, 206) and bool(prefix)
+        verified = 0
+        for _, item in files[:2]:
+            url = item.get("url", "")
+            parsed = urlparse(url)
+            if parsed.scheme != "https" or not parsed.netloc:
+                print("Invalid or missing file URL")
+                continue
+            print("Download:", item.get("filename"), "host:", parsed.netloc, "(query hidden)")
+            status, headers, prefix = fetch(url, 131072, ranged=True)
+            print("Download HTTP:", status, "range:", headers.get("Content-Range"),
+                  "bytes_read:", len(prefix), "signature:", prefix[:8].hex())
+            if status in (200, 206) and prefix:
+                verified += 1
+                preview(prefix)
+        return verified == min(2, len(files))
     except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
         print("Request error:", type(exc).__name__, str(exc)[:240])
         return False
