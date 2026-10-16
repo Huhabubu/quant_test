@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - scripts/okx_sol_archive_probe.py
+      - scripts/okx_sol_day_audit.py
       - .github/workflows/okx-sol-archive-probe.yml
   workflow_dispatch:
 permissions:
@@ -10,7 +11,7 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,3 +19,5 @@ jobs:
           python-version: '3.11'
       - name: Check public OKX historical file listings and bounded byte ranges
         run: python scripts/okx_sol_archive_probe.py
+      - name: Stream and audit complete 2026-09-02 L2 and trade archives
+        run: python scripts/okx_sol_day_audit.py
