@@ -3,6 +3,8 @@
 **Run date:** 2026-10-15 (UTC).  
 **Venue:** Binance USDⓈ-M futures. **Symbol:** SOLUSDT.  
 **Purpose:** Determine availability, event-chain continuity, checkpoint quality and L2 replay fitness, **not** backtest GLFT profitability.
+**Timestamp qualification (added 2026-10-16):** This integrity audit did **not** establish sub-millisecond exchange timestamp precision or execution-latency fitness. Binance depth/trade exchange time fields are milliseconds; the vendor collector ns receive time has different location and clock assumptions. In a separate actual SOLUSDT hour the median `received_time - T` was 133ms (depth) / 129ms (trade); the depth median `E-T` was 5ms. See [timestamp precision audit](cryptohftdata_timestamp_audit_solusdt_2026-09-01_12.md). Do not apply the L2 integrity PASS directly to sub-millisecond queue / fill replay.
+
 **Branch:** `data-check/tardis-crosscheck`; `main` unchanged.  
 **Data handling:** Only hourly market data temporarily downloaded into Actions runners; no market data committed or exported. Workflow output contains aggregate metadata only.
 
