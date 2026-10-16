@@ -5,6 +5,7 @@ on:
       - scripts/okx_sol_archive_probe.py
       - scripts/okx_sol_day_audit.py
       - scripts/okx_sol_l2_replay_audit.py
+      - scripts/okx_sol_l2_report_digest.py
       - .github/workflows/okx-sol-archive-probe.yml
   workflow_dispatch:
 permissions:
@@ -24,6 +25,8 @@ jobs:
         run: python scripts/okx_sol_day_audit.py
       - name: Reconstruct L2 and compare 96 periodic snapshots
         run: python scripts/okx_sol_l2_replay_audit.py
+      - name: Print snapshot consistency diagnostics
+        run: python scripts/okx_sol_l2_report_digest.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
