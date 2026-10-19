@@ -15,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 SESSION_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# Defaults only; users with remapped keys should adjust after checking "key".
+MOVE_KEYS = {"forward": "w", "back": "s", "left": "a", "right": "d"}
 
 
 class InvalidCommand(ValueError):
@@ -93,6 +95,14 @@ class Controller:
         self.console.send("msg " + quote_hmc(text))
         return {"accepted": True, "verified": False}
 
+    def move(self, direction, duration_ms):
+        if not isinstance(direction, str) or direction not in MOVE_KEYS:
+            raise InvalidCommand("direction 必须为 forward/back/left/right")
+        if type(duration_ms) is not int or not 50 <= duration_ms <= 1000:
+            raise InvalidCommand("duration_ms 必须为 50–1000 的整数")
+        self.console.send(f"key {MOVE_KEYS[direction]} --duration {duration_ms}")
+        return {"accepted": True, "verified": False}
+
 
 def make_handler(controller, token):
     """Keep credentials in HTTP; never log request bodies or headers."""
@@ -135,7 +145,7 @@ def make_handler(controller, token):
         def do_POST(self):
             if not self.authorized():
                 return
-            if self.path not in ("/v1/chat", "/v1/connect"):
+            if self.path not in ("/v1/chat", "/v1/connect", "/v1/move"):
                 self.reply(404, {"error": "not_found"})
                 return
             try:
@@ -149,6 +159,10 @@ def make_handler(controller, token):
                     if set(body) != {"text"}:
                         raise InvalidCommand("需要且只允许 text 字段")
                     result = controller.chat(body["text"])
+                elif self.path == "/v1/move":
+                    if set(body) != {"direction", "duration_ms"}:
+                        raise InvalidCommand("move 需要 direction 和 duration_ms")
+                    result = controller.move(body["direction"], body["duration_ms"])
                 else:
                     if body:
                         raise InvalidCommand("connect 请求体必须为空对象")
@@ -173,7 +187,7 @@ def main():
     if len(token) < 32 or any(ord(char) <= 32 for char in token):
         parser.error("请设置至少 32 个无空白字符的 DOUDOU_BRIDGE_TOKEN")
     controller = Controller(TmuxConsole(args.tmux_session), args.server_host, args.server_port)
-    # Loopback-only. An external Muse connector requires a separate HTTPS gateway.
+    # Loopback-only; first check whether Muse runs on the same VM.
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(controller, token))
     print(f"DouDou bridge listening on http://127.0.0.1:{args.port}", flush=True)
     try:
