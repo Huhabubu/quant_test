@@ -38,6 +38,24 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(console.commands, ["connect example.org 25565", 'msg "hi"'])
         self.assertIsNone(controller.status()["game_loaded"])
 
+    def test_bounded_movement(self):
+        console = FakeConsole()
+        controller = Controller(console, "example.org", 25565)
+        self.assertEqual(controller.move("forward", 300), {"accepted": True, "verified": False})
+        self.assertEqual(controller.move("left", 50), {"accepted": True, "verified": False})
+        self.assertEqual(console.commands, [
+            "key w --duration 300",
+            "key a --duration 50",
+        ])
+        for direction, duration in (
+            ("forward", 0), ("forward", 1001), ("forward", True),
+            ("jump", 200), ("w", 200), ("forward", 100.1),
+        ):
+            with self.subTest(direction=direction, duration=duration):
+                with self.assertRaises(InvalidCommand):
+                    controller.move(direction, duration)
+        self.assertEqual(len(console.commands), 2)
+
     def test_tmux_literal_command_and_enter(self):
         calls = []
 
@@ -105,6 +123,23 @@ class HttpTests(unittest.TestCase):
                 self.assertEqual(self.request("POST", path, body)[0], 400)
         self.assertEqual(self.request("POST", "/v1/command", {})[0], 404)
         self.assertEqual(self.console.commands, [])
+
+    def test_move_http_and_reject_injection(self):
+        code, data = self.request("POST", "/v1/move", {
+            "direction": "forward", "duration_ms": 250,
+        })
+        self.assertEqual(code, 202)
+        self.assertFalse(data["verified"])
+        self.assertEqual(self.console.commands, ["key w --duration 250"])
+        for body in (
+            {"direction": "forward; quit", "duration_ms": 200},
+            {"direction": "forward", "duration_ms": 200000},
+            {"direction": "right", "duration_ms": "300"},
+            {"direction": "right", "duration_ms": True},
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self.request("POST", "/v1/move", body)[0], 400)
+        self.assertEqual(len(self.console.commands), 1)
 
     def test_fixed_connect(self):
         self.assertEqual(self.request("POST", "/v1/connect", {})[0], 202)
