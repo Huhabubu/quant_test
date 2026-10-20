@@ -1,4 +1,6 @@
 import sys
+import tempfile
+from pathlib import Path
 import time
 import unittest
 
@@ -32,6 +34,47 @@ class PtyConsoleTests(unittest.TestCase):
         self.assertFalse(console.available())
         with self.assertRaises(ConsoleUnavailable):
             console.send("msg hello")
+
+    def test_partial_prompt_visible_without_newline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            console = PtyConsole([
+                sys.executable, "-u", "-c",
+                'import sys,time; sys.stdout.write("HMC> "); sys.stdout.flush(); time.sleep(2)',
+            ], diagnostic_path=Path(tmp) / "console.log")
+            try:
+                console.start()
+                self.wait_for_partial(console, "HMC> ")
+                self.assertIn("HMC> ", (Path(tmp) / "console.log").read_text())
+            finally:
+                console.stop()
+
+    def test_exit_code_and_last_console_text_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "console.log"
+            console = PtyConsole([
+                sys.executable, "-u", "-c",
+                'import sys; sys.stderr.write("SIMULATED ERROR\\n"); sys.exit(23)',
+            ], diagnostic_path=path)
+            try:
+                console.start()
+                deadline = time.monotonic() + 5
+                while console.available() and time.monotonic() < deadline:
+                    time.sleep(0.03)
+                self.assertEqual(console.recent_output()["exit_code"], 23)
+                self.wait_for(console, "SIMULATED ERROR")
+                self.wait_for(console, "returncode=23")
+            finally:
+                console.stop()
+            self.assertIn("SIMULATED ERROR", path.read_text())
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def wait_for_partial(self, console, expected):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if expected in console.recent_output().get("partial", ""):
+                return
+            time.sleep(0.02)
+        self.fail("PTY incomplete prompt not visible: %r" % console.recent_output())
 
     def wait_for(self, console, exact):
         end = time.monotonic() + 5
