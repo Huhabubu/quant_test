@@ -11,6 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.UUID;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -51,6 +53,13 @@ public final class DouDouClient {
         private static Path root;
         private static int ticks;
         private static final String SESSION_ID = UUID.randomUUID().toString().replace("-", "");
+        private static final int PERCEPTION_RADIUS = 12;
+        private static final int PERCEPTION_VERTICAL = 6;
+        private static final int PERCEPTION_MAX_TARGETS = 48;
+        private static final int PERCEPTION_INTERVAL_TICKS = 40;
+        private static JsonArray cachedNearby = new JsonArray();
+        private static Object cachedLevel;
+        private static long nearbyScannedAtMs;
 
         @SubscribeEvent
         public static void onClientTick(ClientTickEvent.Post ignored) {
@@ -187,7 +196,12 @@ public final class DouDouClient {
             state.addProperty("session_id", SESSION_ID);
             state.addProperty("captured_at_ms", System.currentTimeMillis());
             state.addProperty("in_world", mc.player != null && mc.level != null);
-            if (mc.player == null || mc.level == null) return state;
+            if (mc.player == null || mc.level == null) {
+                cachedNearby = new JsonArray();
+                cachedLevel = null;
+                nearbyScannedAtMs = 0;
+                return state;
+            }
 
             state.addProperty("health", mc.player.getHealth());
             state.addProperty("max_health", mc.player.getMaxHealth());
@@ -219,24 +233,42 @@ public final class DouDouClient {
             }
             state.add("screen_items", opened);
             state.addProperty("screen", mc.gui.screen() == null ? "" : mc.gui.screen().getClass().getSimpleName());
-            state.add("nearby_interactables", nearbyInteractables(mc));
+            if (cachedLevel != mc.level || nearbyScannedAtMs == 0
+                || ticks % PERCEPTION_INTERVAL_TICKS == 0) {
+                cachedNearby = nearbyInteractables(mc);
+                cachedLevel = mc.level;
+                nearbyScannedAtMs = System.currentTimeMillis();
+            }
+            state.addProperty("nearby_scan_radius", PERCEPTION_RADIUS);
+            state.addProperty("nearby_scan_vertical_range", PERCEPTION_VERTICAL);
+            state.addProperty("nearby_scan_updated_at_ms", nearbyScannedAtMs);
+            state.add("nearby_interactables", cachedNearby);
             return state;
         }
 
         /**
-         * Discover nearby VANILLA containers and beds so an agent can choose a
-         * real target coordinate without guessing or changing camera yaw.
-         * A strict bounded scan runs only on snapshot ticks (not each frame).
+         * Discovery only: scan ALREADY LOADED blocks within a 12-block sphere,
+         * limited to +/-6 vertical blocks. Action reach remains exactly 4.5.
+         *
+         * Run every 40 client ticks, not with every 10-tick state snapshot.
+         * Sort all candidates before limiting to 48, so scan order cannot
+         * hide the nearest chest/bed behind more distant entries.
+         *
+         * usable_now is a snapshot hint, NOT permission to interact:
+         * execute() rechecks reach and line-of-sight at the time of use.
          */
         private static JsonArray nearbyInteractables(Minecraft mc) {
-            JsonArray out = new JsonArray();
+            ArrayList<JsonObject> found = new ArrayList<>();
             BlockPos base = mc.player.blockPosition();
             Vec3 eye = mc.player.getEyePosition();
-            for (int dx = -5; dx <= 5; dx++) {
-                for (int dy = -3; dy <= 3; dy++) {
-                    for (int dz = -5; dz <= 5; dz++) {
-                        if (out.size() >= 24) return out;
+            final double rangeSquared = PERCEPTION_RADIUS * PERCEPTION_RADIUS;
+            for (int dx = -PERCEPTION_RADIUS; dx <= PERCEPTION_RADIUS; dx++) {
+                for (int dy = -PERCEPTION_VERTICAL; dy <= PERCEPTION_VERTICAL; dy++) {
+                    for (int dz = -PERCEPTION_RADIUS; dz <= PERCEPTION_RADIUS; dz++) {
                         BlockPos pos = base.offset(dx, dy, dz);
+                        Vec3 center = Vec3.atCenterOf(pos);
+                        double distSquared = eye.distanceToSqr(center);
+                        if (distSquared > rangeSquared) continue;
                         if (!mc.level.hasChunkAt(pos)) continue;
                         BlockState state = mc.level.getBlockState(pos);
                         boolean bed = state.getBlock() instanceof BedBlock;
@@ -244,10 +276,8 @@ public final class DouDouClient {
                             || state.getBlock() instanceof BarrelBlock
                             || state.getBlock() instanceof ShulkerBoxBlock;
                         if (!bed && !box) continue;
-                        Vec3 center = Vec3.atCenterOf(pos);
-                        double dist = Math.sqrt(eye.distanceToSqr(center));
-                        if (dist > 6) continue;
-                        boolean inReach = dist <= 4.5;
+                        double distance = Math.sqrt(distSquared);
+                        boolean inReach = distance <= 4.5;
                         boolean visible = false;
                         if (inReach) {
                             BlockHitResult hit = mc.level.clip(new ClipContext(
@@ -255,19 +285,24 @@ public final class DouDouClient {
                                 ClipContext.Fluid.NONE, mc.player));
                             visible = hit.getBlockPos().equals(pos);
                         }
-                        JsonObject b = new JsonObject();
-                        b.addProperty("x", pos.getX());
-                        b.addProperty("y", pos.getY());
-                        b.addProperty("z", pos.getZ());
-                        b.addProperty("block_id", BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
-                        b.addProperty("kind", bed ? "bed" : "container");
-                        b.addProperty("distance", Math.round(dist * 100.0) / 100.0);
-                        b.addProperty("usable_now", inReach && visible);
-                        out.add(b);
+                        JsonObject block = new JsonObject();
+                        block.addProperty("x", pos.getX());
+                        block.addProperty("y", pos.getY());
+                        block.addProperty("z", pos.getZ());
+                        block.addProperty("block_id", BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
+                        block.addProperty("kind", bed ? "bed" : "container");
+                        block.addProperty("distance", Math.round(distance * 100.0) / 100.0);
+                        block.addProperty("usable_now", inReach && visible);
+                        found.add(block);
                     }
                 }
             }
-            return out;
+            found.sort(Comparator.comparingDouble(block -> block.get("distance").getAsDouble()));
+            JsonArray result = new JsonArray();
+            for (int i = 0; i < Math.min(found.size(), PERCEPTION_MAX_TARGETS); i++) {
+                result.add(found.get(i));
+            }
+            return result;
         }
 
         private static JsonObject stackJson(ItemStack stack, int slot) {
