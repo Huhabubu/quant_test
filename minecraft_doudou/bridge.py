@@ -43,11 +43,12 @@ def quote_hmc(text):
 class TmuxConsole:
     """Send only to an existing session. Does not launch Minecraft."""
 
-    def __init__(self, session, runner=subprocess.run):
+    def __init__(self, session, runner=subprocess.run, launch_lock_dir=None):
         if not SESSION_PATTERN.fullmatch(session):
             raise ValueError("无效 tmux 会话名")
         self.session = session
         self.runner = runner
+        self.launch_lock_dir = Path(launch_lock_dir or (Path.home() / ".local/state/doudou-bridge"))
         self.lock = threading.Lock()
 
     def available(self):
@@ -71,25 +72,25 @@ class TmuxConsole:
         The lock serializes check+mark, then marking BEFORE sending intentionally
         requires operator intervention after uncertain delivery.
         """
-        lockfile = Path.home() / ".local/state/doudou-bridge" / ("launch-" + self.session + ".lock")
+        lockfile = self.launch_lock_dir / ("launch-" + self.session + ".lock")
         lockfile.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         flags = os.O_RDWR | os.O_CREAT
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         fd = os.open(lockfile, flags, 0o600)
         try:
-            with os.fdopen(fd, "rb", closefd=False):
-                fcntl.flock(fd, fcntl.LOCK_EX)
-                if not self.available():
-                    raise ConsoleUnavailable("tmux 启动器会话已结束")
-                if self.launch_submitted():
-                    raise InvalidCommand("该 tmux 会话已经发过 launch，不得二次启动游戏")
-                result = self.runner(
-                    ["tmux", "set-option", "-t", "=" + self.session,
-                     "@doudou_launch_submitted", "1"],
-                    capture_output=True, text=True, check=False, timeout=5)
-                if result.returncode != 0:
-                    raise ConsoleUnavailable("无法持久记录 launch 门禁，拒绝启动")
+            os.fchmod(fd, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            if not self.available():
+                raise ConsoleUnavailable("tmux 启动器会话已结束")
+            if self.launch_submitted():
+                raise InvalidCommand("该 tmux 会话已经发过 launch，不得二次启动游戏")
+            result = self.runner(
+                ["tmux", "set-option", "-t", "=" + self.session,
+                 "@doudou_launch_submitted", "1"],
+                capture_output=True, text=True, check=False, timeout=5)
+            if result.returncode != 0:
+                raise ConsoleUnavailable("无法持久记录 launch 门禁，拒绝启动")
         finally:
             try:
                 fcntl.flock(fd, fcntl.LOCK_UN)
@@ -184,6 +185,12 @@ class Controller:
                 raise InvalidCommand("该控制台已提交过 launch，不能重新修改账号或配置")
             if self._prepared:
                 raise InvalidCommand("启动配置已发送，不允许重复准备")
+            if self.mailbox is not None:
+                try:
+                    if self.mailbox.state().get("in_world"):
+                        raise InvalidCommand("已有 Minecraft 客户端在线，拒绝重新准备")
+                except ModUnavailable:
+                    pass
             if self.mcdir is None:
                 raise InvalidCommand("未指定 --mcdir，拒绝准备启动配置")
             self.console.send("config set hmc.files.mc " + self.mcdir)
