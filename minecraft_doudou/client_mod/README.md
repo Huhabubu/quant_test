@@ -1,0 +1,51 @@
+# DouDou Client Control — NeoForge 26.2
+
+This is an **experimental client-only mod** for the existing real Minecraft client. Do not install it into the server. It is designed for NeoForge 26.2.0.88 and Java 25.
+
+The mod avoids the broken mouse simulation on Muse's headless client. Every ten client ticks it writes a real-time state snapshot to the instance's config/doudou-io/state.json, including: health, hunger, position, sleeping/dead/using-item status, inventory item **counts**, damage, max damage and remaining durability. If a container menu is open, it also exports slot contents and quantities.
+
+It handles only three bounded actions:
+- eat: choose edible food already in hotbar (optionally a specified zero-based slot 0–8) and dispatch the real client game-mode use-item action.
+- open_container: interact with a nearby, unobstructed vanilla chest, barrel or shulker box identified by x/y/z.
+- sleep: interact with a nearby, unobstructed vanilla bed identified by x/y/z. Server rules still apply.
+
+**Compilation is not evidence that any in-game action succeeded.** Every action receipt reports whether the game thread dispatched it, not whether the server permitted it. Confirm item count/hunger changes, container-open state or sleeping state separately.
+
+## Build
+
+Use Gradle 9.2.1 and Java 25, from minecraft_doudou/client_mod:
+
+~~~bash
+gradle --no-daemon build
+~~~
+
+The branch has a separate GitHub Actions Java 25 compilation workflow. If compilation succeeds, the workflow produces the build/libs/doudou_client-0.1.0.jar file. Copy that file to the EXISTING gamedir/neoforge-26.2/mods folder only on a later controlled cold boot, after first checking no existing client is running. Keep hmc-specifics, Baritone, World Bosses and GeckoLib installed; do NOT re-enable JourneyMap.
+
+## Python bridge endpoints
+
+All requests use the existing Bearer token over 127.0.0.1:8765.
+
+| Method and route | Body / purpose |
+| --- | --- |
+| GET /v1/game-state | Get a non-stale (<3 seconds) snapshot |
+| POST /v1/game-action | JSON {"action":"eat","slot":4} (slot 4 is fifth hotbar cell) |
+| POST /v1/game-action | JSON {"action":"eat"} (first hotbar food) |
+| POST /v1/game-action | JSON {"action":"open_container","x":1,"y":64,"z":2} |
+| POST /v1/game-action | JSON {"action":"sleep","x":1,"y":64,"z":2} |
+| GET /v1/game-action?id=32hex | Poll queued/completed/unknown_after_claim/not_found |
+
+The client polls command files under config/doudou-io/commands. It **claims a request before execution** to prevent automatic replay after crashes. Unknown-after-claim is not safe to retry blindly. The client writes results atomically under config/doudou-io/results. The in-game client is the only executor; Python cannot issue arbitrary game actions or shell commands.
+
+The filesystem must remain private to the Muse VM's local game/bridge user; the localhost HTTP port must not be exposed publicly.
+
+## Muse integration / acceptance tests
+
+1. Compile successfully on Java 25; ensure the .88 client starts with the mod and joins the existing server without a server mod change.
+2. Verify item stack counts, remaining axe durability, hunger and health against the game.
+3. **Stop Baritone first** for a controlled action test, to prevent concurrent inputs.
+4. To test eating, be hungry, put golden carrot in hotbar, capture game-state before, issue eat ONCE, poll the action, and verify hunger/item count after enough ticks. If no change, report actual game logs and do not claim eating works.
+5. To test chest, stand within 4.5 blocks of a chest with clear sight, identify its block coordinates, issue open_container, and check container_open and screen_items. Do not assume success from a dispatched receipt.
+6. To test sleeping, interact with a bed at known coordinates during a permitted in-game time. Verify sleeping or server refusal. Do not spoof game rules.
+7. Confirm missing food, blocked sight, wrong target, unloaded chunk, dead state and out-of-range requests are rejected without interaction.
+
+At present, the mod does **not** autonomously choose which chest/bed to visit, move items from non-hotbar inventory to a usable slot, control camera pitch/yaw, or stop/resume Baritone. These are distinct future capabilities.
