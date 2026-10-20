@@ -252,6 +252,7 @@ public final class DouDouClient {
             state.add("nearby_interactables", cachedNearby);
             String scope = LandmarkMemory.scope(mc);
             state.addProperty("landmark_memory_available", scope != null && memory != null);
+            state.addProperty("landmark_memory_scope", scope);
             state.addProperty("dimension", LandmarkMemory.dimension(mc));
             state.add("remembered_landmarks", memory == null
                 ? new JsonArray() : memory.recalled(scope, nearbyScannedAtMs, 256));
