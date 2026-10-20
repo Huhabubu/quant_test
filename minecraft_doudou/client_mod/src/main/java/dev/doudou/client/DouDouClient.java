@@ -19,6 +19,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.core.Direction;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.inventory.Slot;
@@ -63,6 +64,7 @@ public final class DouDouClient {
         private static LandmarkMemory memory;
         private static JsonArray cachedEntities = new JsonArray();
         private static long entitiesScannedAtMs;
+        private static JsonObject lastSleepProbe;
         private static long nearbyScannedAtMs;
         private static EatSession eating;
         private static final int MAX_EAT_TICKS = 120;
@@ -228,6 +230,53 @@ public final class DouDouClient {
                 BlockHitResult visible = mc.level.clip(new ClipContext(
                     eye, center, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player));
                 if (!visible.getBlockPos().equals(target)) return error("line_of_sight_blocked");
+                if ("sleep".equals(action)) {
+                    // Sleep-only diagnostic, no change to the existing block-use
+                    // call or container behavior. An immediate return is not
+                    // proof of the server's sleeping / respawn-point decision.
+                    JsonObject probe = new JsonObject();
+                    probe.addProperty("action_id", id);
+                    probe.addProperty("issued_at_ms", System.currentTimeMillis());
+                    probe.addProperty("target_x", x);
+                    probe.addProperty("target_y", y);
+                    probe.addProperty("target_z", z);
+                    probe.addProperty("block_id",
+                        BuiltInRegistries.BLOCK.getKey(block.getBlock()).toString());
+                    probe.addProperty("bed_part", block.getValue(BedBlock.PART).toString());
+                    probe.addProperty("bed_facing", block.getValue(BedBlock.FACING).toString());
+                    probe.addProperty("bed_occupied_client", block.getValue(BedBlock.OCCUPIED));
+                    probe.addProperty("hit_x", visible.getLocation().x);
+                    probe.addProperty("hit_y", visible.getLocation().y);
+                    probe.addProperty("hit_z", visible.getLocation().z);
+                    probe.addProperty("hit_face", visible.getDirection().toString());
+                    probe.addProperty("hit_type", visible.getType().toString());
+                    probe.addProperty("screen_before", mc.gui.screen() == null
+                        ? "" : mc.gui.screen().getClass().getSimpleName());
+                    probe.addProperty("container_open_before",
+                        mc.player.containerMenu != mc.player.inventoryMenu);
+                    probe.addProperty("using_item_before", mc.player.isUsingItem());
+                    probe.addProperty("use_key_down_before", mc.options.keyUse.isDown());
+                    probe.addProperty("sleeping_before", mc.player.isSleeping());
+                    probe.addProperty("selected_hotbar_slot",
+                        mc.player.getInventory().getSelectedSlot());
+                    probe.addProperty("selected_item_id", BuiltInRegistries.ITEM.getKey(
+                        mc.player.getMainHandItem().getItem()).toString());
+                    var useResult = mc.gameMode.useItemOn(
+                        mc.player, InteractionHand.MAIN_HAND, visible);
+                    probe.addProperty("client_interaction_result",
+                        String.valueOf(useResult));
+                    probe.addProperty("screen_immediate", mc.gui.screen() == null
+                        ? "" : mc.gui.screen().getClass().getSimpleName());
+                    probe.addProperty("sleeping_immediate", mc.player.isSleeping());
+                    lastSleepProbe = probe.deepCopy();
+
+                    JsonObject receipt = dispatched("bed_use_dispatched",
+                        "Client result only. Check sleep_probe in later state.json and server chat/log");
+                    for (var entry : probe.entrySet()) {
+                        receipt.add(entry.getKey(), entry.getValue());
+                    }
+                    return receipt;
+                }
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, visible);
                 return dispatched("block_use_sent", "Verify the opened screen or sleeping flag later");
             }
@@ -317,6 +366,15 @@ public final class DouDouClient {
             state.addProperty("session_id", SESSION_ID);
             state.addProperty("captured_at_ms", System.currentTimeMillis());
             state.addProperty("in_world", mc.player != null && mc.level != null);
+            if (lastSleepProbe != null) {
+                JsonObject probe = lastSleepProbe.deepCopy();
+                probe.addProperty("snapshot_at_ms", System.currentTimeMillis());
+                probe.addProperty("sleeping_at_snapshot", mc.player != null
+                    && mc.player.isSleeping());
+                probe.addProperty("screen_at_snapshot", mc.gui.screen() == null
+                    ? "" : mc.gui.screen().getClass().getSimpleName());
+                state.add("sleep_probe", probe);
+            }
             if (mc.player == null || mc.level == null) {
                 cachedNearby = new JsonArray();
                 cachedLevel = null;
