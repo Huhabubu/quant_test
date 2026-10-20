@@ -65,10 +65,10 @@ class PreflightTests(unittest.TestCase):
         result = build_java_argv(base, str(self.root))
         self.assertEqual(result[0:2], base[0:2])
         self.assertEqual(result[-2:], base[-2:])
-        self.assertIn("-Dhmc.mcdir=" + str(self.root), result)
         self.assertIn("-Dhmc.files.mc=" + str(self.root), result)
         self.assertIn("-Dfile.encoding=UTF-8", result)
-        self.assertLess(result.index("-Dhmc.mcdir=" + str(self.root)), result.index("-jar"))
+        self.assertLess(result.index("-Dhmc.files.mc=" + str(self.root)), result.index("-jar"))
+        self.assertFalse(any(p.startswith("-Dhmc.mcdir=") for p in result))
         self.assertEqual(base, ["/usr/bin/java", "-Xms256m", "-jar", "/opt/headlessmc.jar"])
 
     def test_reject_conflicting_or_appended_launch(self):
