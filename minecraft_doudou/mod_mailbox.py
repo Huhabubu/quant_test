@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 import time
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 
 class ModUnavailable(RuntimeError):
@@ -92,6 +92,18 @@ class ModMailbox:
             if "slot" in request and (type(request["slot"]) is not int
                                       or not 0 <= request["slot"] <= 8):
                 raise InvalidModAction("slot 必须是 0..8 的快捷栏索引")
+        elif action in ("open_corpse", "take_corpse_items"):
+            if set(request) != {"action", "entity_uuid"}:
+                raise InvalidModAction("尸体操作仅接受 action/entity_uuid")
+            identity = request["entity_uuid"]
+            if not isinstance(identity, str) or len(identity) != 36:
+                raise InvalidModAction("entity_uuid 必须是规范 UUID 字符串")
+            try:
+                parsed = UUID(identity)
+            except (ValueError, AttributeError) as exc:
+                raise InvalidModAction("entity_uuid 无效") from exc
+            if str(parsed) != identity:
+                raise InvalidModAction("entity_uuid 必须为小写、带连字符的规范 UUID")
         elif action in ("open_container", "sleep"):
             if set(request) != {"action", "x", "y", "z"}:
                 raise InvalidModAction("方块交互需要 action/x/y/z")
@@ -100,7 +112,7 @@ class ModMailbox:
                 if type(value) is not int or not -bound <= value <= bound:
                     raise InvalidModAction(f"{key} 必须在安全整数范围内")
         else:
-            raise InvalidModAction("只允许 eat/open_container/sleep")
+            raise InvalidModAction("只允许 eat/open_container/sleep/open_corpse/take_corpse_items")
         return dict(request)
 
     def submit(self, request):
