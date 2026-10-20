@@ -109,6 +109,12 @@ class HttpTests(unittest.TestCase):
         self.assertTrue(data["console_available"])
         self.assertIsNone(data["server_connected"])
 
+    def test_output_requires_auth_and_support(self):
+        self.assertEqual(self.request("GET", "/v1/output", token="bad")[0], 401)
+        code, payload = self.request("GET", "/v1/output")
+        self.assertEqual(code, 501)
+        self.assertEqual(payload["error"], "output_not_supported")
+
     def test_send_chat(self):
         self.assertEqual(self.request("POST", "/v1/chat", {"text": "你好"})[0], 202)
         self.assertEqual(self.console.commands, ['msg "你好"'])
