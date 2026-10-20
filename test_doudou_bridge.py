@@ -56,16 +56,36 @@ class BridgeTests(unittest.TestCase):
                     controller.move(direction, duration)
         self.assertEqual(len(console.commands), 2)
 
-    def test_one_shot_exact_launch(self):
+    def test_preparation_required_and_one_shot_launch(self):
         console = FakeConsole()
-        controller = Controller(console, "example.org", 25565)
-        self.assertEqual(controller.launch(), {"accepted": True, "verified": False})
-        self.assertEqual(console.commands, [
-            'launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"'
-        ])
+        controller = Controller(console, "example.org", 25565, mcdir="/tmp/game")
         with self.assertRaises(InvalidCommand):
             controller.launch()
-        self.assertEqual(len(console.commands), 1)
+        answer = controller.prepare()
+        self.assertFalse(answer["verified"])
+        self.assertTrue(controller.status()["profile_preparation_submitted"])
+        self.assertEqual(console.commands, [
+            "config set hmc.mcdir /tmp/game",
+            "account -p offline select DouDou",
+        ])
+        with self.assertRaises(InvalidCommand):
+            controller.prepare()
+        self.assertEqual(controller.launch(), {"accepted": True, "verified": False})
+        with self.assertRaises(InvalidCommand):
+            controller.launch()
+        with self.assertRaises(InvalidCommand):
+            controller.prepare()
+        self.assertEqual(console.commands[-1],
+                         'launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"')
+        self.assertEqual(len(console.commands), 3)
+
+    def test_reject_unsafe_profile_data(self):
+        for path in ("/tmp/x\nquit", "relative/dir", "/tmp/spaces here", "/tmp/a;quit"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                Controller(FakeConsole(), "example.org", 25565, mcdir=path)
+        with self.assertRaises(ValueError):
+            Controller(FakeConsole(), "example.org", 25565, mcdir="/tmp/game",
+                       player_name="DouDou\nquit")
 
     def test_tmux_literal_command_and_enter(self):
         calls = []
@@ -90,7 +110,7 @@ class BridgeTests(unittest.TestCase):
 class HttpTests(unittest.TestCase):
     def setUp(self):
         self.console = FakeConsole()
-        controller = Controller(self.console, "example.org", 25565)
+        controller = Controller(self.console, "example.org", 25565, mcdir="/tmp/game")
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(controller, TOKEN))
         self.worker = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.worker.start()
@@ -158,13 +178,21 @@ class HttpTests(unittest.TestCase):
                 self.assertEqual(self.request("POST", "/v1/move", body)[0], 400)
         self.assertEqual(len(self.console.commands), 1)
 
-    def test_launch_endpoint_once(self):
+    def test_prepare_then_launch_endpoints(self):
+        self.assertEqual(self.request("POST", "/v1/launch", {})[0], 400)
+        self.assertEqual(self.request("POST", "/v1/prepare", {"arbitrary": "yes"})[0], 400)
+        code, data = self.request("POST", "/v1/prepare", {})
+        self.assertEqual(code, 202)
+        self.assertFalse(data["verified"])
+        self.assertEqual(self.request("POST", "/v1/prepare", {})[0], 400)
         self.assertEqual(self.request("POST", "/v1/launch", {"command": "quit"})[0], 400)
         status, data = self.request("POST", "/v1/launch", {})
         self.assertEqual(status, 202)
         self.assertFalse(data["verified"])
         self.assertEqual(self.request("POST", "/v1/launch", {})[0], 400)
         self.assertEqual(self.console.commands, [
+            "config set hmc.mcdir /tmp/game",
+            "account -p offline select DouDou",
             'launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"'
         ])
 
