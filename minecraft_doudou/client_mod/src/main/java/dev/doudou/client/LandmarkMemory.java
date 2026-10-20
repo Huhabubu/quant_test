@@ -59,12 +59,20 @@ final class LandmarkMemory {
     }
 
     static String scope(Minecraft mc) {
-        if (mc.level == null || mc.getCurrentServer() == null
-            || mc.getCurrentServer().ip == null || mc.getCurrentServer().ip.isBlank()) {
-            // Do not mix unrelated offline / singleplayer worlds.
-            return null;
+        if (mc.level == null) return null;
+        String endpoint = null;
+        if (mc.getCurrentServer() != null && mc.getCurrentServer().ip != null
+            && !mc.getCurrentServer().ip.isBlank()) {
+            endpoint = mc.getCurrentServer().ip;
+        } else if (mc.getConnection() != null
+            && mc.getConnection().getConnection() != null
+            && mc.getConnection().getConnection().getRemoteAddress() != null) {
+            // HMC may connect without populating Minecraft's server-list entry.
+            endpoint = mc.getConnection().getConnection().getRemoteAddress().toString();
         }
-        String identity = mc.getCurrentServer().ip.trim().toLowerCase()
+        // Do not mix unrelated worlds if neither endpoint is available.
+        if (endpoint == null || endpoint.isBlank()) return null;
+        String identity = endpoint.trim().toLowerCase()
             + "|" + dimension(mc);
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
