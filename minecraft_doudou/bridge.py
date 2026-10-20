@@ -12,6 +12,7 @@ import re
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 
 SESSION_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -70,12 +71,13 @@ class TmuxConsole:
 
 
 class Controller:
-    def __init__(self, console, target_host, target_port, mcdir=None, player_name="DouDou"):
+    def __init__(self, console, target_host, target_port, mcdir=None, player_name="DouDou", events=None):
         if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", target_host):
             raise ValueError("无效的服务器域名")
         if not 1 <= target_port <= 65535:
             raise ValueError("无效的服务器端口")
         self.console = console
+        self.events = events
         self.target_host = target_host
         self.target_port = target_port
         if mcdir is not None and not re.fullmatch(r"/[A-Za-z0-9_./-]+", mcdir):
@@ -91,6 +93,8 @@ class Controller:
     def status(self):
         return {
             "console_available": self.console.available(),
+            "launcher_exit_code": (self.console.process.poll() if hasattr(self.console, "process")
+                                   and self.console.process is not None else None),
             "game_loaded": None,
             "profile_preparation_submitted": self._prepared,
             "launch_submitted": self._launch_submitted,
@@ -177,7 +181,25 @@ def make_handler(controller, token):
                 return
             if not self.authorized():
                 return
-            if self.path == "/v1/status":
+            if self.path.startswith("/v1/events"):
+                parsed = urlsplit(self.path)
+                if parsed.path != "/v1/events":
+                    self.reply(404, {"error": "not_found"})
+                    return
+                if controller.events is None:
+                    self.reply(501, {"error": "events_not_supported"})
+                    return
+                try:
+                    query = parse_qs(parsed.query, keep_blank_values=True)
+                    if set(query) - {"after", "wait_ms"} or any(len(v) != 1 for v in query.values()):
+                        raise ValueError("invalid query")
+                    args = {key: int(query[key][0]) for key in query}
+                    if any(not query[k][0].isdigit() for k in query):
+                        raise ValueError("invalid number")
+                    self.reply(200, controller.events.get(**args))
+                except (TypeError, ValueError):
+                    self.reply(400, {"error": "invalid_query"})
+            elif self.path == "/v1/status":
                 try:
                     self.reply(200, controller.status())
                 except (OSError, subprocess.TimeoutExpired):
