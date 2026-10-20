@@ -157,11 +157,12 @@ public final class DouDouClient {
             }
             if (!request.has("action")) return error("missing_action");
             String action = request.get("action").getAsString();
+            if (eating != null) return error("eating_in_progress");
 
             if ("eat".equals(action)) {
-                if (eating != null) return error("eating_in_progress");
                 if (mc.gui.screen() != null) return error("screen_open");
-                if (mc.player.isUsingItem()) return error("already_using_item");
+                if (mc.player.isUsingItem() || mc.options.keyUse.isDown())
+                    return error("already_using_item");
                 if (!mc.player.getFoodData().needsFood()) return error("not_hungry");
                 int slot = request.has("slot") ? request.get("slot").getAsInt() : -1;
                 if (slot < -1 || slot > 8) return error("invalid_hotbar_slot");
@@ -324,6 +325,11 @@ public final class DouDouClient {
             state.addProperty("dead", mc.player.isDeadOrDying());
             state.addProperty("sleeping", mc.player.isSleeping());
             state.addProperty("using_item", mc.player.isUsingItem());
+            state.addProperty("eating_active", eating != null);
+            if (eating != null) {
+                state.addProperty("eating_id", eating.id());
+                state.addProperty("eating_ticks_elapsed", ticks - eating.tickStarted());
+            }
             state.addProperty("x", mc.player.getX());
             state.addProperty("y", mc.player.getY());
             state.addProperty("z", mc.player.getZ());
