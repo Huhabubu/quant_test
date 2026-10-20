@@ -127,3 +127,46 @@ The previously deployed 0.2.0 cannot finish eating. This version holds the game 
 The game command result is deferred until the attempt finishes. Query the result ID as usual. During the attempt it can return `in_progress`; on completion it reports before/after food counts, hunger levels and ticks elapsed. A build passing CI is NOT proof that a real server accepted the eating action.
 
 Muse next test: when the existing client has naturally stopped, install only the new JAR after archiving older versions. In a safe area, stop Baritone, close GUI windows, place golden carrots in the hotbar, ensure hunger is below 20, and submit one `eat` action. Check that the item stack decreases and hunger rises within several seconds. Do not automatically retry an unconfirmed action.
+
+## v0.2.2 — Own corpse interaction and official Take All integration
+
+This candidate **retains the server-tested v0.2.1 eating, landmark memory, entity awareness, sleep, and chest support**. Do not install until a successful NeoForge 26.2.0.88 / Java 25 CI build, and do not hot-swap a running client.
+
+This is an optional, narrow integration with henkelmax Corpse (server reports corpse-neoforge 1.1.19). The plugin uses runtime reflection so it can still load if Corpse is absent, but refuses requests that cannot be verified.
+
+Authoritative implementation checked in upstream Corpse code:
+- Entity registry key: `corpse:corpse` (MobCategory.MISC); earlier v0.2.1 nearby scan excludes it.
+- `CorpseEntity.interact(...)` opens the real, editable corpse menu when server permissions allow.
+- The official GUI `CorpseInventoryScreen.PRESS_TRANSFER_ITEMS` sends `new MessageTransferItems()` using NeoForge `ClientPacketDistributor.sendToServer`.
+- Server-side `MessageTransferItems` handles it ONLY for a living player with a current `ITransferrable` menu; editable checks happen in the container.
+- The death-history menu is intentionally not equivalent to a nearby physical corpse and may be read-only.
+
+New state:
+- `nearby_entities` includes `category=corpse` even though this entity is not a player, living mob, or ground item; every returned entity includes UUID and client numeric ID; a corpse includes `owned_by_self`.
+- `corpse_menu_open`, `corpse_menu_editable`, `corpse_menu_history`, `corpse_menu_owned_by_self`, and `corpse_menu_uuid` are reported for server-synchronized corpse GUI menus.
+- The existing `screen_items` array exposes visible corpse-menu slot names/counts when opened.
+
+New bounded actions:
+1. `{"action":"open_corpse","entity_uuid":"<UUID-from-nearby_entities>"}` — check loaded Corpse entity, exact UUID, ownership == local player's UUID, <= 4.5 block reach, clear path, and no pre-existing screen; invoke `gameMode.interact` exactly once. A `corpse_interaction_sent` receipt is NOT proof the server opened it.
+2. `{"action":"take_corpse_items","entity_uuid":"<same UUID>"}` — only when the active menu is a Corpse inventory/additional-items menu, NOT a death-history view, `editable=true`, the displayed corpse belongs to the local player, and the UUID matches. Invoke the same official `corpse:transfer_items` packet as its Take All button. This intentionally does not write inventory locally or click screen pixels. A `corpse_transfer_packet_sent` receipt is NOT proof of recovery; inspect item counts and contents after server sync.
+
+Using the standalone CLI (no Python PTY bridge required):
+
+~~~bash
+ROOT=/home/hatch/workspace/headlessmc/gamedir/neoforge-26.2/config/doudou-io
+
+# After a safe, natural restart into 0.2.2:
+python3 -m minecraft_doudou.mod_cli --root "$ROOT" state
+# Find a nearby entity with category=corpse, owned_by_self=true, and copy its UUID.
+python3 -m minecraft_doudou.mod_cli --root "$ROOT" open-corpse <actual-corpse-UUID>
+python3 -m minecraft_doudou.mod_cli --root "$ROOT" state
+# Verify corpse_menu_open=true, corpse_menu_editable=true, and matching UUID.
+python3 -m minecraft_doudou.mod_cli --root "$ROOT" take-corpse <same-UUID>
+python3 -m minecraft_doudou.mod_cli --root "$ROOT" state
+~~~
+
+**Expected success:** After open, `corpse_menu_open` and `screen_items` reflect real server data. After Take All, verify the iron axe, golden carrots, and wood reappear in DouDou's personal inventory. The official transfer may move existing equipment to additional-items storage and/or open an additional-items screen if there is insufficient space. Check that menu too; do NOT assume one packet always empties every page. Do not resend automatically on an unknown-after-claim outcome. If the server rejects, stop and save the sanitized receipt and game-state for further diagnosis.
+
+**Security:** The commands cannot target someone else's corpse even if the Corpse server configuration would permit it, cannot interact with arbitrary entities, and cannot use read-only history menus to take items.
+
+**No other changes:** Baritone's incidental digging and pit-filling are explicitly outside this patch.
