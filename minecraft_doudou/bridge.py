@@ -78,6 +78,8 @@ class Controller:
         self.console = console
         self.target_host = target_host
         self.target_port = target_port
+        self._launch_lock = threading.Lock()
+        self._launch_submitted = False
 
     def status(self):
         return {
@@ -86,6 +88,15 @@ class Controller:
             "server_connected": None,
             "note": "只验证控制台进程可用；尚不能证明客户端加载或连服成功",
         }
+
+    def launch(self):
+        """Submit the exact last-known-good NeoForge command once per bridge run."""
+        with self._launch_lock:
+            if self._launch_submitted:
+                raise InvalidCommand("本次控制台已提交过 launch；禁止重复启动")
+            self.console.send('launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"')
+            self._launch_submitted = True
+        return {"accepted": True, "verified": False}
 
     def connect(self):
         self.console.send(f"connect {self.target_host} {self.target_port}")
@@ -150,7 +161,7 @@ def make_handler(controller, token):
         def do_POST(self):
             if not self.authorized():
                 return
-            if self.path not in ("/v1/chat", "/v1/connect", "/v1/move"):
+            if self.path not in ("/v1/chat", "/v1/connect", "/v1/move", "/v1/launch"):
                 self.reply(404, {"error": "not_found"})
                 return
             try:
@@ -164,6 +175,10 @@ def make_handler(controller, token):
                     if set(body) != {"text"}:
                         raise InvalidCommand("需要且只允许 text 字段")
                     result = controller.chat(body["text"])
+                elif self.path == "/v1/launch":
+                    if body:
+                        raise InvalidCommand("launch 请求体必须为空对象")
+                    result = controller.launch()
                 elif self.path == "/v1/move":
                     if set(body) != {"direction", "duration_ms"}:
                         raise InvalidCommand("move 需要 direction 和 duration_ms")
