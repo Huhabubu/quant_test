@@ -197,6 +197,13 @@ public final class DouDouClient {
                 return null;  // Deferred result written by tickEating().
             }
 
+            if ("open_corpse".equals(action)) {
+                return CorpseInteraction.open(mc, request);
+            }
+            if ("take_corpse_items".equals(action)) {
+                return CorpseInteraction.takeAll(mc, request);
+            }
+
             if ("open_container".equals(action) || "sleep".equals(action)) {
                 if (!request.has("x") || !request.has("y") || !request.has("z")) {
                     return error("missing_block_coordinates");
@@ -354,6 +361,8 @@ public final class DouDouClient {
             }
             state.add("screen_items", opened);
             state.addProperty("screen", mc.gui.screen() == null ? "" : mc.gui.screen().getClass().getSimpleName());
+            JsonObject corpseMenu = CorpseInteraction.menuInfo(mc);
+            for (var entry : corpseMenu.entrySet()) state.add(entry.getKey(), entry.getValue());
             boolean worldChanged = cachedLevel != mc.level;
             if (worldChanged || nearbyScannedAtMs == 0
                 || ticks % PERCEPTION_INTERVAL_TICKS == 0) {
