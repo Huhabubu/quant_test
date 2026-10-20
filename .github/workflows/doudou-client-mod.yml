@@ -1,0 +1,25 @@
+name: DouDou NeoForge client mod (experimental)
+on:
+  push:
+    branches: [feature/doudou-minecraft-bridge]
+    paths:
+      - 'minecraft_doudou/client_mod/**'
+      - '.github/workflows/doudou-client-mod.yml'
+  workflow_dispatch:
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+      - name: Compile client-only mod (NO game launch, NO deployment)
+        run: gradle --no-daemon --console plain -p minecraft_doudou/client_mod build
