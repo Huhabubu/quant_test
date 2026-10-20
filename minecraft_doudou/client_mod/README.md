@@ -75,3 +75,13 @@ python3 -m minecraft_doudou.mod_cli --root "$ROOT" sleep 1 64 2
 最后两个坐标仅为示意，**必须使用游戏内读到的实际 x/y/z**。如果 Action 回报 accepted=true,verified=false，仍要等待服务器状态变化再判断成功。
 
 这样可以分别验证“Mod 本身能否执行”与“HTTP 桥能否启动和控制”，避免两类故障同时干扰诊断。所有动作受 session_id 和 10 秒有效期保护，跨客户端重启的旧命令不会被执行。
+
+## Nearby perception radius — expanded source (requires a newly built JAR)
+
+- Supported targets: vanilla chest, barrel, shulker box, bed. **Not** all terrain blocks, nearby players, hostile mobs, dropped items or unopened chest inventory contents.
+- Previously: eye distance at most **6 blocks**, grid ±5 horizontal / ±3 vertical, at most 24 results, scanned every 10 client ticks.
+- New: at most **12 blocks** from the eye, scan ±12 horizontal and ±6 vertical, return the **48 closest** results sorted by distance.
+- The wider scan runs every **40 client ticks (~2 s at 20 TPS)**; health, item counts and durability remain updated every 10 ticks (~0.5s).
+- State JSON includes nearby_scan_radius, nearby_scan_vertical_range and nearby_scan_updated_at_ms. Cached usable_now can be 2 seconds old; game actions still check the **4.5 block interaction reach** and line-of-sight before executing.
+- Only ALREADY LOADED chunks are inspected; this does not force distant chunk loads.
+- The installed 0.1.0 JAR does not update by changing the Python files. Obtain a new build candidate and install during the NEXT safe cold boot; do not hot-swap a live mod.
