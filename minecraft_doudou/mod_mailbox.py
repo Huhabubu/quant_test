@@ -47,6 +47,40 @@ class ModMailbox:
             raise ModUnavailable("游戏状态缺少 in_world")
         return state
 
+    def landmarks(self, kind=None, limit=100):
+        """Recall old fixed-block locations; each result remains unverified."""
+        if kind is not None and kind not in ("bed", "container", "workstation"):
+            raise InvalidModAction("kind 只能是 bed/container/workstation")
+        if type(limit) is not int or not 1 <= limit <= 256:
+            raise InvalidModAction("limit 必须是 1..256")
+        state = self.state()
+        scope = state.get("landmark_memory_scope")
+        if not isinstance(scope, str) or len(scope) != 64 or any(
+                ch not in "0123456789abcdef" for ch in scope):
+            raise ModUnavailable("当前服务器或维度身份无法确认")
+        saved = self._read_json(self.root / "landmarks.json", max_bytes=1_000_000)
+        if not isinstance(saved, dict) or saved.get("schema") != 1:
+            raise ModUnavailable("地标记忆格式不兼容")
+        entries = saved.get("entries")
+        if not isinstance(entries, list) or len(entries) > 1024:
+            raise ModUnavailable("地标记忆记录无效")
+        found = []
+        for value in entries:
+            if not isinstance(value, dict) or value.get("scope") != scope:
+                continue
+            if kind is not None and value.get("kind") != kind:
+                continue
+            if not all(type(value.get(c)) is int for c in ("x", "y", "z", "last_seen_at_ms")):
+                continue
+            found.append(value)
+        found.sort(key=lambda v: v["last_seen_at_ms"], reverse=True)
+        return {
+            "entries": found[:limit], "count_matching": len(found),
+            "truncated": len(found) > limit,
+            "verification": "historical_last_seen_only_revalidate_before_use",
+            "note": "地标坐标是方块本体，不可直接作为 Baritone #goto 站位",
+        }
+
     @staticmethod
     def validate(request):
         if not isinstance(request, dict):
