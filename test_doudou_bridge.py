@@ -76,7 +76,7 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(InvalidCommand):
             controller.prepare()
         self.assertEqual(console.commands[-1],
-                         'launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"')
+                         'launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx3G"')
         self.assertEqual(len(console.commands), 3)
 
     def test_reject_unsafe_profile_data(self):
@@ -193,7 +193,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.console.commands, [
             "config set hmc.files.mc /tmp/game",
             "account -p offline select DouDou",
-            'launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"'
+            'launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx3G"'
         ])
 
     def test_fixed_connect(self):
