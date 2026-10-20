@@ -219,7 +219,55 @@ public final class DouDouClient {
             }
             state.add("screen_items", opened);
             state.addProperty("screen", mc.gui.screen() == null ? "" : mc.gui.screen().getClass().getSimpleName());
+            state.add("nearby_interactables", nearbyInteractables(mc));
             return state;
+        }
+
+        /**
+         * Discover nearby VANILLA containers and beds so an agent can choose a
+         * real target coordinate without guessing or changing camera yaw.
+         * A strict bounded scan runs only on snapshot ticks (not each frame).
+         */
+        private static JsonArray nearbyInteractables(Minecraft mc) {
+            JsonArray out = new JsonArray();
+            BlockPos base = mc.player.blockPosition();
+            Vec3 eye = mc.player.getEyePosition();
+            for (int dx = -5; dx <= 5; dx++) {
+                for (int dy = -3; dy <= 3; dy++) {
+                    for (int dz = -5; dz <= 5; dz++) {
+                        if (out.size() >= 24) return out;
+                        BlockPos pos = base.offset(dx, dy, dz);
+                        if (!mc.level.hasChunkAt(pos)) continue;
+                        BlockState state = mc.level.getBlockState(pos);
+                        boolean bed = state.getBlock() instanceof BedBlock;
+                        boolean box = state.getBlock() instanceof ChestBlock
+                            || state.getBlock() instanceof BarrelBlock
+                            || state.getBlock() instanceof ShulkerBoxBlock;
+                        if (!bed && !box) continue;
+                        Vec3 center = Vec3.atCenterOf(pos);
+                        double dist = Math.sqrt(eye.distanceToSqr(center));
+                        if (dist > 6) continue;
+                        boolean inReach = dist <= 4.5;
+                        boolean visible = false;
+                        if (inReach) {
+                            BlockHitResult hit = mc.level.clip(new ClipContext(
+                                eye, center, ClipContext.Block.OUTLINE,
+                                ClipContext.Fluid.NONE, mc.player));
+                            visible = hit.getBlockPos().equals(pos);
+                        }
+                        JsonObject b = new JsonObject();
+                        b.addProperty("x", pos.getX());
+                        b.addProperty("y", pos.getY());
+                        b.addProperty("z", pos.getZ());
+                        b.addProperty("block_id", BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
+                        b.addProperty("kind", bed ? "bed" : "container");
+                        b.addProperty("distance", Math.round(dist * 100.0) / 100.0);
+                        b.addProperty("usable_now", inReach && visible);
+                        out.add(b);
+                    }
+                }
+            }
+            return out;
         }
 
         private static JsonObject stackJson(ItemStack stack, int slot) {
