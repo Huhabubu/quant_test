@@ -13,6 +13,7 @@ from http.server import ThreadingHTTPServer
 
 from .bridge import ConsoleUnavailable, Controller, InvalidCommand, make_handler
 from .preflight import PreflightError, build_java_argv, inspect_installation
+from .events import MinecraftChatEvents
 
 
 class StdioConsole:
@@ -96,6 +97,8 @@ def main():
     parser.add_argument("--cwd", help="HeadlessMC 运行目录")
     parser.add_argument("--mcdir", required=True, help="已安装的 Minecraft 游戏目录（不要用 --cwd 代替）")
     parser.add_argument("--pty", action="store_true", help="使用模拟交互式终端，保持 JLine 行为")
+    parser.add_argument("--owner-name", default="Huhabubu", help="只监听这个玩家的聊天")
+    parser.add_argument("--diagnostic-log", help="仅 PTY：私有 launcher 合并输出日志路径")
     parser.add_argument("--server-host", required=True)
     parser.add_argument("--server-port", type=int, required=True)
     parser.add_argument("command", nargs=argparse.REMAINDER,
@@ -114,15 +117,23 @@ def main():
         parser.error("请设置至少 32 个无空白字符的 DOUDOU_BRIDGE_TOKEN")
     if args.pty:
         from .pty_bridge import PtyConsole
-        console = PtyConsole(command, cwd=args.cwd)
+        console = PtyConsole(command, cwd=args.cwd, diagnostic_path=args.diagnostic_log)
     else:
         console = StdioConsole(command, cwd=args.cwd)
-    controller = Controller(console, args.server_host, args.server_port, mcdir=installation["mcdir"])
+    events = MinecraftChatEvents(
+        os.path.join(installation["instance"], "logs", "latest.log"),
+        allowed_sender=args.owner_name,
+    )
+    controller = Controller(
+        console, args.server_host, args.server_port,
+        mcdir=installation["mcdir"], events=events
+    )
     # Bind BEFORE launching Java so port conflicts cannot spawn a second client.
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(controller, token))
     try:
         print("Preflight OK: %s; active mod jars=%d; JourneyMap disabled" % (
             installation["instance"], installation["mods_count"]), flush=True)
+        events.start()
         console.start()
         print("Local bridge at http://127.0.0.1:%d; HMC PID=%d" % (args.port, console.process.pid), flush=True)
         server.serve_forever()
@@ -130,6 +141,7 @@ def main():
         pass
     finally:
         server.server_close()
+        events.stop()
         console.stop()
 
 
