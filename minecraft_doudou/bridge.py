@@ -202,6 +202,29 @@ def make_handler(controller, token):
                         self.reply(200, controller.mailbox.state())
                     except ModUnavailable:
                         self.reply(503, {"error": "client_mod_unavailable_or_stale"})
+            elif self.path.startswith("/v1/landmarks"):
+                parsed = urlsplit(self.path)
+                if parsed.path != "/v1/landmarks":
+                    self.reply(404, {"error": "not_found"})
+                    return
+                if controller.mailbox is None:
+                    self.reply(501, {"error": "client_mod_not_configured"})
+                    return
+                try:
+                    query = parse_qs(parsed.query, keep_blank_values=True)
+                    if set(query) - {"kind", "limit"} or any(len(v) != 1 for v in query.values()):
+                        raise InvalidModAction("invalid_query")
+                    kind = query.get("kind", [None])[0]
+                    if kind == "":
+                        raise InvalidModAction("invalid_kind")
+                    limit_text = query.get("limit", ["100"])[0]
+                    if not limit_text.isdigit():
+                        raise InvalidModAction("invalid_limit")
+                    self.reply(200, controller.mailbox.landmarks(kind, int(limit_text)))
+                except InvalidModAction:
+                    self.reply(400, {"error": "invalid_request"})
+                except ModUnavailable:
+                    self.reply(503, {"error": "client_mod_unavailable_or_stale"})
             elif self.path.startswith("/v1/game-action?"):
                 if controller.mailbox is None:
                     self.reply(501, {"error": "client_mod_not_configured"})
