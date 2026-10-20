@@ -21,6 +21,10 @@ class PtyConsoleTests(unittest.TestCase):
             self.wait_for(console, "ISATTY True True")
             console.send("msg hello")
             self.wait_for(console, "RECV:msg hello")
+            # Python->PTY->Python round trip: isolates console transport from
+            # downstream Java/JLine/Minecraft chat behavior.
+            console.send("msg 你好，豆豆")
+            self.wait_for(console, "RECV:msg 你好，豆豆")
             with self.assertRaises(InvalidCommand):
                 console.send("msg hello\nexit")
         finally:
