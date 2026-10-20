@@ -13,6 +13,7 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
+from .mod_mailbox import ModMailbox, ModUnavailable, InvalidModAction
 
 
 SESSION_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -71,12 +72,13 @@ class TmuxConsole:
 
 
 class Controller:
-    def __init__(self, console, target_host, target_port, mcdir=None, player_name="DouDou", events=None, account_probe=None):
+    def __init__(self, console, target_host, target_port, mcdir=None, player_name="DouDou", events=None, account_probe=None, mailbox=None):
         if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", target_host):
             raise ValueError("无效的服务器域名")
         if not 1 <= target_port <= 65535:
             raise ValueError("无效的服务器端口")
         self.console = console
+        self.mailbox = mailbox
         self.events = events
         self.account_probe = account_probe
         self.target_host = target_host
@@ -192,6 +194,27 @@ def make_handler(controller, token):
                     self.reply(501, {"error": "account_proof_not_configured"})
                 else:
                     self.reply(200, controller.account_probe.verify())
+            elif self.path == "/v1/game-state":
+                if controller.mailbox is None:
+                    self.reply(501, {"error": "client_mod_not_configured"})
+                else:
+                    try:
+                        self.reply(200, controller.mailbox.state())
+                    except ModUnavailable:
+                        self.reply(503, {"error": "client_mod_unavailable_or_stale"})
+            elif self.path.startswith("/v1/game-action?"):
+                if controller.mailbox is None:
+                    self.reply(501, {"error": "client_mod_not_configured"})
+                    return
+                try:
+                    query = parse_qs(urlsplit(self.path).query)
+                    if set(query) != {"id"} or len(query["id"]) != 1:
+                        raise InvalidModAction("需要单个 id")
+                    self.reply(200, controller.mailbox.result(query["id"][0]))
+                except InvalidModAction:
+                    self.reply(400, {"error": "invalid_request"})
+                except ModUnavailable:
+                    self.reply(503, {"error": "client_mod_unavailable"})
             elif self.path.startswith("/v1/events"):
                 parsed = urlsplit(self.path)
                 if parsed.path != "/v1/events":
@@ -226,7 +249,7 @@ def make_handler(controller, token):
         def do_POST(self):
             if not self.authorized():
                 return
-            if self.path not in ("/v1/chat", "/v1/connect", "/v1/move", "/v1/launch", "/v1/prepare"):
+            if self.path not in ("/v1/chat", "/v1/connect", "/v1/move", "/v1/launch", "/v1/prepare", "/v1/game-action"):
                 self.reply(404, {"error": "not_found"})
                 return
             try:
@@ -236,7 +259,12 @@ def make_handler(controller, token):
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
                 if not isinstance(body, dict):
                     raise InvalidCommand("请求体必须是 JSON 对象")
-                if self.path == "/v1/chat":
+                if self.path == "/v1/game-action":
+                    if controller.mailbox is None:
+                        self.reply(501, {"error": "client_mod_not_configured"})
+                        return
+                    result = controller.mailbox.submit(body)
+                elif self.path == "/v1/chat":
                     if set(body) != {"text"}:
                         raise InvalidCommand("需要且只允许 text 字段")
                     result = controller.chat(body["text"])
@@ -257,8 +285,10 @@ def make_handler(controller, token):
                         raise InvalidCommand("connect 请求体必须为空对象")
                     result = controller.connect()
                 self.reply(202, result)
-            except (InvalidCommand, ValueError, UnicodeError, TypeError):
+            except (InvalidCommand, InvalidModAction, ValueError, UnicodeError, TypeError):
                 self.reply(400, {"error": "invalid_request"})
+            except ModUnavailable:
+                self.reply(503, {"error": "client_mod_unavailable_or_stale"})
             except (ConsoleUnavailable, OSError, subprocess.TimeoutExpired):
                 self.reply(503, {"error": "console_unavailable"})
 
