@@ -23,3 +23,10 @@ jobs:
           gradle-version: '9.2.1'
       - name: Compile client-only mod (NO game launch, NO deployment)
         run: gradle --no-daemon --console plain -p minecraft_doudou/client_mod build
+
+      - name: Upload reviewed build candidate (do not deploy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: doudou-client-mod-26.2-candidate
+          path: minecraft_doudou/client_mod/build/libs/*.jar
+          if-no-files-found: error
