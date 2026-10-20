@@ -145,6 +145,34 @@ class ModMailboxTests(unittest.TestCase):
         with self.assertRaises(ModUnavailable):
             self.box.landmarks()
 
+    def test_corpse_action_requires_canonical_uuid_and_exact_fields(self):
+        good = "123e4567-e89b-42d3-a456-426614174000"
+        for action in ("open_corpse", "take_corpse_items"):
+            self.assertEqual(
+                self.box.validate({"action": action, "entity_uuid": good})["entity_uuid"], good)
+            for bad in (
+                {"action": action},
+                {"action": action, "entity_uuid": "none"},
+                {"action": action, "entity_uuid": good.upper()},
+                {"action": action, "entity_uuid": "123e4567e89b42d3a456426614174000"},
+                {"action": action, "entity_uuid": good, "x": 123},
+                {"action": action, "entity_uuid": good, "command": "/op"},
+            ):
+                with self.subTest(action=action, bad=bad), self.assertRaises(InvalidModAction):
+                    self.box.submit(bad)
+        self.assertEqual(list((self.root / "commands").iterdir()), [])
+
+    def test_corpse_queue_is_not_replayed_or_claimed_verified(self):
+        uuid = "123e4567-e89b-42d3-a456-426614174000"
+        for action in ("open_corpse", "take_corpse_items"):
+            task = self.box.submit({"action": action, "entity_uuid": uuid})
+            path = self.root / "commands" / (task["id"] + ".json")
+            self.assertFalse(task["verified"])
+            self.assertEqual(json.loads(path.read_text())["entity_uuid"], uuid)
+            self.assertEqual(self.box.result(task["id"])["status"], "queued")
+            path.rename(self.root / "commands" / (task["id"] + ".processing"))
+            self.assertEqual(self.box.result(task["id"])["status"], "unknown_after_claim")
+
     def test_bounded_block_interaction_payload(self):
         result = self.box.submit({"action": "sleep", "x": 3, "y": 65, "z": -4})
         self.assertEqual(self.box.result(result["id"])["status"], "queued")
@@ -177,6 +205,14 @@ class ModMailboxTests(unittest.TestCase):
             code, result = req("GET", "/v1/game-action?id=" + submitted["id"])
             self.assertEqual(code, 200)
             self.assertEqual(result["status"], "queued")
+            corpse_uuid = "123e4567-e89b-42d3-a456-426614174000"
+            status, sent = req("POST", "/v1/game-action",
+                               {"action": "open_corpse", "entity_uuid": corpse_uuid})
+            self.assertEqual(status, 202)
+            self.assertEqual(req("GET", "/v1/game-action?id=" + sent["id"])[1]["status"], "queued")
+            self.assertEqual(req("POST", "/v1/game-action", {
+                "action": "take_corpse_items", "entity_uuid": corpse_uuid,
+                "target": "anyone"})[0], 400)
             self.assertEqual(req("GET", "/v1/game-action?id=bad")[0], 400)
         finally:
             srv.shutdown()
