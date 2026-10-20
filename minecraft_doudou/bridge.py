@@ -5,9 +5,11 @@ tmux acceptance does not prove in-game execution.
 """
 
 import argparse
+import fcntl
 import hmac
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import threading
@@ -55,6 +57,59 @@ class TmuxConsole:
         )
         return result.returncode == 0
 
+    def launch_submitted(self):
+        """Persisted in tmux itself; survives a lost/restarted HTTP bridge."""
+        response = self.runner(
+            ["tmux", "show-options", "-v", "-t", "=" + self.session,
+             "@doudou_launch_submitted"],
+            capture_output=True, text=True, check=False, timeout=5)
+        return response.returncode == 0 and response.stdout.strip() == "1"
+
+    def reserve_launch(self):
+        """Cross-process fail-closed one-shot, even with multiple HTTP bridges.
+
+        The lock serializes check+mark, then marking BEFORE sending intentionally
+        requires operator intervention after uncertain delivery.
+        """
+        lockfile = Path.home() / ".local/state/doudou-bridge" / ("launch-" + self.session + ".lock")
+        lockfile.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(lockfile, flags, 0o600)
+        try:
+            with os.fdopen(fd, "rb", closefd=False):
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                if not self.available():
+                    raise ConsoleUnavailable("tmux 启动器会话已结束")
+                if self.launch_submitted():
+                    raise InvalidCommand("该 tmux 会话已经发过 launch，不得二次启动游戏")
+                result = self.runner(
+                    ["tmux", "set-option", "-t", "=" + self.session,
+                     "@doudou_launch_submitted", "1"],
+                    capture_output=True, text=True, check=False, timeout=5)
+                if result.returncode != 0:
+                    raise ConsoleUnavailable("无法持久记录 launch 门禁，拒绝启动")
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+
+    def recent_output(self):
+        result = self.runner(
+            ["tmux", "capture-pane", "-p", "-t", "=" + self.session,
+             "-S", "-40"],
+            capture_output=True, text=True, check=False, timeout=5)
+        if result.returncode != 0:
+            raise ConsoleUnavailable("无法读取 tmux 控制台")
+        return {
+            "console_available": True,
+            "lines": list(enumerate(result.stdout.splitlines()[-40:], start=1)),
+            "partial": result.stdout.splitlines()[-1][-1000:] if result.stdout.splitlines() else "",
+            "note": "tmux 当前屏幕输出，可能包含玩家聊天；不保证启动或游戏命令执行成功",
+        }
+
     def send(self, command):
         if "\n" in command or "\r" in command or "\x00" in command:
             raise InvalidCommand("无效控制台命令")
@@ -94,16 +149,27 @@ class Controller:
         self._launch_submitted = False
 
     def status(self):
+        live = None
+        if self.mailbox is not None:
+            try:
+                state = self.mailbox.state()
+                live = state.get("in_world")
+            except ModUnavailable:
+                pass
+        submitted = self._launch_submitted
+        if hasattr(self.console, "launch_submitted"):
+            submitted = submitted or self.console.launch_submitted()
         return {
             "console_available": self.console.available(),
             "launcher_exit_code": (self.console.process.poll() if hasattr(self.console, "process")
                                    and self.console.process is not None else None),
-            "game_loaded": None,
+            "game_loaded": live,
             "profile_preparation_submitted": self._prepared,
-            "launch_submitted": self._launch_submitted,
+            "launch_submitted": submitted,
             "account_verified": (self.account_probe.verify()["verified"] if self.account_probe else None),
-            "server_connected": None,
-            "note": "只验证控制台进程可用；尚不能证明客户端加载或连服成功",
+            "server_connected": True if live is True else None,
+            "game_state_fresh": live is not None,
+            "note": "in_world=True 仅证明最近客户端处于世界；tmux 重连不代表服务器或聊天通道无故障",
         }
 
     def prepare(self):
@@ -113,8 +179,9 @@ class Controller:
         This does NOT create or replace the persisted account UUID.
         """
         with self._launch_lock:
-            if self._launch_submitted:
-                raise InvalidCommand("游戏已提交启动，不能重新修改启动配置")
+            if self._launch_submitted or (hasattr(self.console, "launch_submitted")
+                                          and self.console.launch_submitted()):
+                raise InvalidCommand("该控制台已提交过 launch，不能重新修改账号或配置")
             if self._prepared:
                 raise InvalidCommand("启动配置已发送，不允许重复准备")
             if self.mcdir is None:
@@ -132,17 +199,33 @@ class Controller:
     def launch(self):
         """Submit the exact last-known-good NeoForge command once per bridge run."""
         with self._launch_lock:
-            if self._launch_submitted:
-                raise InvalidCommand("本次控制台已提交过 launch；禁止重复启动")
+            if self._launch_submitted or (hasattr(self.console, "launch_submitted")
+                                          and self.console.launch_submitted()):
+                raise InvalidCommand("本控制台已提交过 launch；禁止重复启动")
+            if self.mailbox is not None:
+                try:
+                    if self.mailbox.state().get("in_world"):
+                        raise InvalidCommand("Mod 仍在世界中，拒绝重复启动")
+                except ModUnavailable:
+                    pass
             if self.mcdir is not None and not self._prepared:
                 raise InvalidCommand("必须先调用 /v1/prepare 并核对控制台输出")
             if self.account_probe is not None and not self.account_probe.verify()["verified"]:
                 raise InvalidCommand("无法证明本会话已选择 DouDou，拒绝启动")
-            self.console.send('launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"')
+            if hasattr(self.console, "reserve_launch"):
+                self.console.reserve_launch()
+            self._launch_submitted = True  # fail closed even if send() fails
+            self.console.send('launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx3G"')
             self._launch_submitted = True
         return {"accepted": True, "verified": False}
 
     def connect(self):
+        if self.mailbox is not None:
+            try:
+                if self.mailbox.state().get("in_world"):
+                    raise InvalidCommand("已在游戏世界中，拒绝再次连接")
+            except ModUnavailable:
+                pass
         self.console.send(f"connect {self.target_host} {self.target_port}")
         return {"accepted": True, "verified": False}
 
@@ -319,25 +402,50 @@ def make_handler(controller, token):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DouDou Minecraft local bridge")
+    """Attach bridge to existing tmux-managed HeadlessMC; never own/kill Java."""
+    from .preflight import inspect_installation, PreflightError
+    from .account_state import AccountSelectionProbe
+    from .events import MinecraftChatEvents
+    from .mod_mailbox import ModMailbox
+
+    parser = argparse.ArgumentParser(description="DouDou attachable local HTTP bridge")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--tmux-session", default="doudou")
+    parser.add_argument("--tmux-session", default="doudou-managed")
+    parser.add_argument("--mcdir", required=True)
+    parser.add_argument("--account-state-file", required=True)
+    parser.add_argument("--owner-name", default="Huhabubu")
     parser.add_argument("--server-host", required=True)
     parser.add_argument("--server-port", type=int, required=True)
     args = parser.parse_args()
     token = os.environ.get("DOUDOU_BRIDGE_TOKEN", "")
     if len(token) < 32 or any(ord(char) <= 32 for char in token):
         parser.error("请设置至少 32 个无空白字符的 DOUDOU_BRIDGE_TOKEN")
-    controller = Controller(TmuxConsole(args.tmux_session), args.server_host, args.server_port)
-    # Loopback-only; first check whether Muse runs on the same VM.
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(controller, token))
-    print(f"DouDou bridge listening on http://127.0.0.1:{args.port}", flush=True)
     try:
+        installation = inspect_installation(args.mcdir)
+    except (OSError, PreflightError) as exc:
+        parser.error("游戏目录预检失败: " + str(exc))
+    console = TmuxConsole(args.tmux_session)
+    if not console.available():
+        parser.error("tmux session 不存在，请先运行 session_manager ensure（不会自动启动第二个客户端）")
+    events = MinecraftChatEvents(
+        os.path.join(installation["instance"], "logs", "latest.log"),
+        allowed_sender=args.owner_name)
+    mailbox = ModMailbox(os.path.join(installation["instance"], "config", "doudou-io"))
+    probe = AccountSelectionProbe(args.account_state_file)
+    controller = Controller(console, args.server_host, args.server_port,
+        mcdir=installation["mcdir"], account_probe=probe, events=events,
+        mailbox=mailbox)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(controller, token))
+    try:
+        events.start()
+        print(f"DouDou REATTACH bridge at http://127.0.0.1:{args.port}; tmux={args.tmux_session}", flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
+        events.stop()
+        # NEVER terminate or kill HMC; that process belongs to tmux.
 
 
 if __name__ == "__main__":
