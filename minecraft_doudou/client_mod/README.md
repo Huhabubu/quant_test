@@ -170,3 +170,17 @@ python3 -m minecraft_doudou.mod_cli --root "$ROOT" state
 **Security:** The commands cannot target someone else's corpse even if the Corpse server configuration would permit it, cannot interact with arbitrary entities, and cannot use read-only history menus to take items.
 
 **No other changes:** Baritone's incidental digging and pit-filling are explicitly outside this patch.
+
+## v0.2.4: Sleep-only diagnostic build (not a sleep fix)
+
+Muse's Issue #2 controlled reproductions in comment 6293410581 ruled out GUI residue, held food, Baritone movement, and switching bed head/foot. The basic block-use code is byte-for-byte unchanged from the previously successful v0.1.0, and v0.2.2 containers still work.
+
+v0.2.4 changes ONLY the sleep response, leaving the existing useItemOn call unchanged. It continues to enforce the same 4.5-block reach, loaded chunk, bed type, and visible ray.
+
+Sleep result now has reason bed_use_dispatched (verified=false), and reports action_id, target xyz, block_id, bed_part, bed_facing, bed_occupied_client, hit xyz, hit_face, hit_type, screen_before, container_open_before, using_item_before, use_key_down_before, sleeping_before, selected_hotbar_slot, selected_item_id, client_interaction_result (the actual returned result from useItemOn), screen_immediate and sleeping_immediate.
+
+The subsequent state.json snapshots include sleep_probe with the same ID, client_interaction_result, sleeping_at_snapshot, screen_at_snapshot, and snapshot_at_ms. The probe remains until the next sleep action or client restart. Client dispatch/return is NOT proof that the server accepted the sleep.
+
+Next safe cold boot only: back up v0.2.2, install only v0.2.4, preserve proven -Xmx3G. At night, stand still near a known usable bed, stop Baritone, empty hand, close GUIs. Submit ONE sleep action; record its result with actual return code. After 1-2 seconds capture mod_cli state including sleep_probe and sleeping. Correlate with sanitized local chat/latest.log server reply. Do not auto-retry and do not conclude success without actual sleeping=true.
+
+This does not change the v0.2.3 Python tmux supervisor, container use, eating or Corpse inventory recovery.
