@@ -117,7 +117,7 @@ class Controller:
                 raise InvalidCommand("启动配置已发送，不允许重复准备")
             if self.mcdir is None:
                 raise InvalidCommand("未指定 --mcdir，拒绝准备启动配置")
-            self.console.send("config set hmc.mcdir " + self.mcdir)
+            self.console.send("config set hmc.files.mc " + self.mcdir)
             if self.account_probe:
                 self.account_probe.arm()
             self.console.send("account -p offline select " + self.player_name)
