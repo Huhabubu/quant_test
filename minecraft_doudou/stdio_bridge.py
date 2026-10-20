@@ -93,6 +93,7 @@ def main():
     parser = argparse.ArgumentParser(description="HeadlessMC stdin/stdout local bridge")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--cwd", help="HeadlessMC 运行目录")
+    parser.add_argument("--pty", action="store_true", help="使用模拟交互式终端，保持 JLine 行为")
     parser.add_argument("--server-host", required=True)
     parser.add_argument("--server-port", type=int, required=True)
     parser.add_argument("command", nargs=argparse.REMAINDER,
@@ -104,7 +105,11 @@ def main():
     token = os.environ.get("DOUDOU_BRIDGE_TOKEN", "")
     if len(token) < 32 or any(ord(char) <= 32 for char in token):
         parser.error("请设置至少 32 个无空白字符的 DOUDOU_BRIDGE_TOKEN")
-    console = StdioConsole(command, cwd=args.cwd)
+    if args.pty:
+        from .pty_bridge import PtyConsole
+        console = PtyConsole(command, cwd=args.cwd)
+    else:
+        console = StdioConsole(command, cwd=args.cwd)
     controller = Controller(console, args.server_host, args.server_port)
     # Bind BEFORE launching Java so port conflicts cannot spawn a second client.
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(controller, token))
