@@ -68,6 +68,12 @@ class PtyConsole(StdioConsole):
             try:
                 if self.cwd:
                     os.chdir(self.cwd)
+                # JLine determines terminal charset from the locale. Use UTF-8
+                # for this child if the inherited locale is C/ASCII.
+                locale = (os.environ.get("LC_ALL") or os.environ.get("LC_CTYPE")
+                          or os.environ.get("LANG") or "")
+                if "utf-8" not in locale.lower() and "utf8" not in locale.lower():
+                    os.environ["LC_ALL"] = "C.UTF-8"
                 os.execvp(self.argv[0], self.argv)
             except Exception as exc:
                 os.write(2, ("HeadlessMC exec failed: " + str(exc) + "\n").encode())
