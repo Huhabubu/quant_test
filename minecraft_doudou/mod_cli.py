@@ -24,6 +24,9 @@ def main(argv=None):
         action = sub.add_parser(name)
         for axis in ("x", "y", "z"):
             action.add_argument(axis, type=int)
+    for name in ("open-corpse", "take-corpse"):
+        action = sub.add_parser(name)
+        action.add_argument("entity_uuid", help="UUID from nearby_entities where category=corpse and owned_by_self=true")
     res = sub.add_parser("result")
     res.add_argument("id")
     args = parser.parse_args(argv)
@@ -39,6 +42,10 @@ def main(argv=None):
             if args.slot is not None:
                 payload["slot"] = args.slot
             output = box.submit(payload)
+        elif args.command in ("open-corpse", "take-corpse"):
+            output = box.submit({"action": "open_corpse" if args.command == "open-corpse"
+                                 else "take_corpse_items",
+                                 "entity_uuid": args.entity_uuid})
         elif args.command in ("open", "sleep"):
             payload = {
                 "action": "open_container" if args.command == "open" else "sleep",
