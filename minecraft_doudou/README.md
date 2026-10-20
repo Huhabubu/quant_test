@@ -1,116 +1,104 @@
-# DouDou × Minecraft × Muse｜同 VM 控制桥
+# DouDou × Minecraft × Muse｜2026-10-20 成功联调经验固化
 
-目标：现有 Muse 个人账号控制真正的 Minecraft 26.2 / NeoForge 客户端：聊天、移动，随后再做状态读取和自主陪玩。无需单独计费的 Muse Model API、不使用协议机器人、不改变服务端 mod。
+**阶段：Draft PR #3，修正下一次启动。** Muse 于 2026-10-20 13:23 报告，用手动 PTY 会话已经成功进入真实 Minecraft 服务器，英文聊天和移动已验证。新桥的自动准备与字符编码改动**仍需云 VM 实机验证**。如果现有 DouDou 还在线，不要启动第二份客户端或替换正在运行的进程。
 
-## 2026-10-20 09:35 最新环境（Muse 回复；开发端尚未远程实测）
+## 已确认的环境
 
-| 项目 | 现状 |
-|---|---|
-| 主机 | Muse 与 HeadlessMC 在同一台云 VM，HOME=/home/hatch |
-| HeadlessMC | 10-20 03:50 runtime 重启后已退出，**目前没有 Java 进程** |
-| 控制台 | 使用持久 PTY（模拟终端）的 stdin/stdout；没有 tmux |
-| 游戏版本 | Minecraft 26.2 / NeoForge **26.2.0.88** / hmc-specifics **3.0.0** |
-| 游戏准备 | 曾进入主菜单；27 个 mod 已齐，Alex's Mobs 已安装；待真正进服 |
-| Muse | 私人自定义连接器可用；无外部 webhook 实时推送，支持分钟级轮询 |
-| 网络 | **同 VM 优先使用 127.0.0.1**；无需公网 HTTPS 网关 |
+- Minecraft 26.2；NeoForge **26.2.0.88**；JDK 25；hmc-specifics 26.2-3.0.0。
+- HeadlessMC 位于 Muse VM 的 /home/hatch/workspace/headlessmc/（实际路径以 Muse 现场核对为准）。
+- 游戏预装路径：游戏根目录 gamedir，实例 gamedir/neoforge-26.2。
+- 第二阶段成功的游戏命令：launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"。
+- 7.7GB VM 上堆内存 **5G** 稳定，6G 曾被 OOM killer 杀。
+- 服务器 mod 注册表已验证成功；World Bosses + GeckoLib 已加入；JourneyMap 禁用后，Muse 报告进服稳定。
+- VM 可能无预警重启并回滚启动器配置。**不要依赖启动器配置持久化，也不要启用尚未经验证的自动重启看门狗。**
 
-## 为什么要让 Python 从一开始持有控制台？
+## 本轮修正了哪些失败根因？
 
-正在运行的 Java 进程，其 stdin（标准输入）可能属于另一个交互终端。另起 Python 程序无法安全、可靠地夺取它的 stdin。
+1. **启动到了错误的 Minecraft 目录**：此前只配置了 --cwd，HeadlessMC 落到 /root/.minecraft，选了 .93，重新下载 481MB 且缺少 mod。现在强制 --mcdir 参数，在启动 Java 前验证现有模组实例，并向 launcher JVM 注入 hmc.mcdir 和 hmc.files.mc 两个系统属性。再通过同会话 /v1/prepare 显式发送 config set hmc.mcdir。
+2. **账号变成 Offline**：保留上次账号记录并不代表当前 HeadlessMC 会话已选择 DouDou。/v1/prepare 发送 account -p offline select DouDou，使用**已有账号**，不重新生成 UUID。**如果该命令报错，不要继续 launch**。Muse 已验证 account -p offline login 的手动交互流程；若 select 未能恢复账号，请在 Issue 留下脱敏失败日志。
+3. **模组缺失 / JourneyMap 崩溃**：预检检查现有 NeoForge 目录、足量 JAR、hmc-specifics、World Bosses、GeckoLib、fml.toml 的 earlyWindowControl=false，发现启用 JourneyMap 就拒绝启动。不删除或移动用户的文件。
+4. **中文聊天发送乱码**：Java launcher 的输入、输出、文件编码增加 UTF-8 属性；PTY 的非 UTF-8 locale 自动修正，添加模拟中文往返测试。**不能宣称游戏内乱码已修复，必须由 Muse 和服主验证**。
+5. **反复慢启动**：先排除错误目录、重复下载和崩溃造成的重复冷启动。原正常 NeoForge 启动仍约需数分钟，还未提供逐阶段 CPU/IO 耗时数据。
 
-因此新增 **stdio_bridge.py**：由 Python 的 subprocess.Popen 启动**原来的 Java 命令及游戏参数**，持续写 stdin、读取 stdout（标准输出），并对本机开放受 Token 保护的 HTTP 接口。无需 tmux。它会改变启动命令的外层父进程，需要在**下一次**启动时使用；无法接管之前已经独立启动的 Java 进程。
+## 测试（不会启动真实 MC）
 
-**已新增 `--pty` 模式**，保留 Muse 已成功使用的交互式伪终端及 HeadlessMC 默认 JLine 行为；本次无需强制添加 `-Dhmc.jline.enabled=false`。旧管道模式仅作为兼容选项。
-
-**下次启动前请先确认没有 HeadlessMC / MC 正在运行，避免重复实例。** 如果此前已经成功的原始启动命令有其他参数，请保留那些参数；不要重新下载或更新现有 NeoForge 26.2.0.88。
-
-## HTTP 接口
-
-全部监听在 **127.0.0.1:8765**，其中 /v1/* 需要 Authorization: Bearer Token。Token 应由本机生成并仅保存在 Muse 安全凭据系统/私密环境，不能复制进 GitHub、Issue 或普通聊天。
-
-| 方法 | 路径 | 功能 |
-|---|---|---|
-| GET | /health | 本地 HTTP 服务存活 |
-| GET | /v1/status | 控制台进程是否运行；不保证游戏到主菜单或进服 |
-| GET | /v1/output | 从 Java stdout 缓存读取最近最多 40 行，受 Bearer 保护 |
-| POST | /v1/launch | 请求体 {}：每个桥进程只允许一次，提交 `launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"` |
-| POST | /v1/connect | 请求体 {}：连接预配置的 MC 服务器 |
-| POST | /v1/chat | 请求体 {"text":"你好"}，最长 200 字符 |
-| POST | /v1/move | {"direction":"forward","duration_ms":300} |
-
-移动只允许 forward/back/left/right，映射默认 W/S/A/D。单次按键 50–1000ms，自动释放，使用 hmc-specifics 的 key --duration 命令；玩家修改过按键绑定时，需先在游戏控制台检查实际键名。官方源码：https://github.com/headlesshq/hmc-specifics/blob/main/hmc-specifics-api/src/main/java/me/earth/headlessmc/mc/commands/KeyCommand.java
-
-**任何写入返回 accepted:true, verified:false 只代表控制台收到了文本提交；实际游戏是否执行需要额外确认。** /v1/output 是最近的控制台输出而非可靠的游戏状态服务。
-
-## 验证步骤
-
-先在仓库根目录运行 Python 单元测试（只用模拟 Java 子进程，不会启动 MC）：
+在 quant_test 仓库的 feature/doudou-minecraft-bridge 分支运行：
 
 ~~~bash
-python3 -m unittest -v test_doudou_bridge.py test_stdio_bridge.py test_pty_bridge.py
+python3 -m unittest -v test_doudou_bridge.py test_stdio_bridge.py test_pty_bridge.py test_doudou_preflight.py
 ~~~
 
-下一次由 Muse 在云 VM 里启动时，**下面只是启动形式示例**。JAVA25 必须指向 Muse 已经验证可用的 Java 25 可执行文件；请保留此前实际进入主菜单时成功的 HeadlessMC 命令参数，特别是 NeoForge .88 对应实例。启动期间不要另起第二份 HeadlessMC：
+## 下一次从零启动（仅在现有 DouDou 下线且无遗留实例时）
+
+**注意：** 该命令只启动 HeadlessMC 控制台，**不直接 launch 游戏**；游戏指令在后面单独发。
 
 ~~~bash
-# 在已检出的 quant_test 仓库根目录执行
-export JAVA25="/absolute/path/to/working/java25/bin/java"
+# 在 quant_test 仓库根目录，MC 的实际磁盘路径应由 Muse 先核实
+export HMC_HOME="/home/hatch/workspace/headlessmc"
 export DOUDOU_BRIDGE_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export MC_HOST="<私有服务器域名>"
 export MC_PORT="<私有服务器端口>"
 
 python3 -m minecraft_doudou.stdio_bridge \
-  --pty --cwd "$HOME/workspace/headlessmc" \
+  --pty --cwd "$HMC_HOME" --mcdir "$HMC_HOME/gamedir" \
   --server-host "$MC_HOST" --server-port "$MC_PORT" -- \
-  "$JAVA25" -jar "$HOME/workspace/headlessmc/headlessmc.jar"
+  "$HMC_HOME/jdk/jdk-25.0.4.1+1/bin/java" \
+  -jar "$HMC_HOME/headlessmc.jar"
 ~~~
 
-本 Python 进程通过 PTY 持有 HeadlessMC stdin/stdout。它关闭时，会停止**由它自己启动的 Java 进程**。不要在正常联机时随意停止这个 Python 父进程。
+运行前预检必须通过：gamedir/neoforge-26.2/mods 存在且至少 20 个 JAR，包含 hmc-specifics、World Bosses 和 GeckoLib；fml.toml 有 earlyWindowControl=false；JourneyMap JAR 不在启用的 mods 目录。**如果现场的版本/目录结构变化，先核实，不要仅为绕过检查随意创建空目录或拷贝错误版本。**
 
-**第二阶段：** 等 `/v1/output` 确认 HeadlessMC 交互命令台已启动，再用 Bearer 鉴权发送一次 `POST /v1/launch`、请求体 `{}`。该接口发送以下**固定**指令：
+同一 VM 的另一个安全 shell 使用相同 Token，按此顺序：
 
-~~~text
-launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"
-~~~
+| 顺序 | API | 备注 |
+|---|---|---|
+| 1 | GET /v1/status | 仅确认 launcher 进程在运行 |
+| 2 | GET /v1/output | 检查 HeadlessMC 控制台已就绪 |
+| 3 | POST /v1/prepare，JSON {} | 本会话设置正确 mcdir、选择 DouDou |
+| 4 | GET /v1/output | **人工或 Muse 检查选账号是否出现报错** |
+| 5 | POST /v1/launch，JSON {} | 仅此一次，执行上面 5G 的游戏命令 |
+| 6 | GET /v1/output | 核查版本 .88、用户 DouDou、主菜单加载 |
+| 7 | POST /v1/connect，JSON {} | 主菜单后连接预配置的服务器 |
+| 8 | POST /v1/chat，JSON {"text":"Hello from DouDou"} | 先验证英文；再额外验证中文 |
+| 9 | POST /v1/move，JSON {"direction":"forward","duration_ms":200} | 安全地面上验证位移 |
 
-重复请求将返回 400。请勿同时手工再输入一次 launch。Muse 实测到达主菜单需要数分钟，期间观察日志即可。
-
-在同一 VM、**同一 Token 已安全注入的另一个会话**中检查：
+本地准备与启动调用示例：
 
 ~~~bash
-curl -sS -H "Authorization: Bearer $DOUDOU_BRIDGE_TOKEN" \
-  http://127.0.0.1:8765/v1/status
+curl -sS -X POST -H "Authorization: Bearer $DOUDOU_BRIDGE_TOKEN" \
+  -H "Content-Type: application/json" -d '{}' \
+  http://127.0.0.1:8765/v1/prepare
 
 curl -sS -H "Authorization: Bearer $DOUDOU_BRIDGE_TOKEN" \
   http://127.0.0.1:8765/v1/output
 
+# 确认本会话账号选择无错误后：
 curl -sS -X POST -H "Authorization: Bearer $DOUDOU_BRIDGE_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"你好，我是 DouDou"}' \
-  http://127.0.0.1:8765/v1/chat
+  -H "Content-Type: application/json" -d '{}' \
+  http://127.0.0.1:8765/v1/launch
 ~~~
 
-成功进入服务器后，确保角色周围安全，再验证移动：
+若 select DouDou 失败，**暂停**，不要 launch：Muse 的手动成功路径是同一个启动器会话用 account -p offline login、按提示选择/登录 DouDou；不建议程序在无法核对原 UUID 时自动创建新离线身份。
 
-~~~bash
-curl -sS -X POST -H "Authorization: Bearer $DOUDOU_BRIDGE_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"direction":"forward","duration_ms":200}' \
-  http://127.0.0.1:8765/v1/move
-~~~
+## 已实现的 API 与边界
 
-/v1/output 可能包含玩家聊天、其他用户信息或凭据，上传 Issue 前务必脱敏。出现 stdout 读取失败或 Java 提前退出时，把**脱敏后的错误上下文**回复至 Issue。
+- GET /health：本机存活；
+- GET /v1/status：Java 存活与是否提交了 prepare/launch（并不保证游戏主菜单已就绪）；
+- GET /v1/output：最近最多 40 行控制台输出，需要鉴权，上传公开 Issue 前要脱敏；
+- POST /v1/prepare：安全固定目录、现有 DouDou 账号选择；
+- POST /v1/launch：固定的 NeoForge 26.2 + 5G 指令，一次进程生命周期只准一次；
+- POST /v1/connect：只连接预先设置的服务器；
+- POST /v1/chat：1–200 字符，禁止换行/控制字符；
+- POST /v1/move：前后左右 W/S/A/D，单次 50–1000ms 自动释放。
 
-## Muse 下一步协作
+服务只监听 127.0.0.1:8765；/v1/* 使用 Bearer Token。不支持任意 shell 命令执行接口。HTTP 202 accepted:true, verified:false 只表示命令写入了 HeadlessMC 控制台；不代表游戏执行成功。
 
-详见 [Issue #2](https://github.com/Huhabubu/quant_test/issues/2)。
+## 尚未完成
 
-Muse 已于 09:35 确认成功启动的两阶段命令和运行条件：JDK25、持久 PTY、NeoForge 26.2.0.88、游戏堆内存 5G。云 VM 的进程在部署重启后**可能无预警消失**；Muse 可以负责保存定时任务并检查，但必须避免重叠启动和重复联机。桥本身不保证跨部署恢复，也不自动创建 cron。
+- 中文聊天是否真正无乱码；
+- select 已保存账号是否能在未来新的 Muse 会话正确生效（如不能，需要补更稳的安全登录方案）；
+- 实时结构化读取聊天、坐标、实体、血量；
+- 云 VM 重启后安全恢复、防并发重复启动、cron；
+- NeoForge 实际加载各阶段的耗时分解。
 
-随后验证 status、output、chat、connect、move 的实机闭环。当前不开发 HTTPS 网关，不使用 tmux。旧 TmuxConsole 仅留作其他环境的兼容实现。
-
-Muse 的自主玩法按“分钟级定时检查 + 用户主动召唤”推进，实时动作由客户端本地完成。没有通用外部 webhook 即时唤醒的能力证明。
-
-## 离线昵称需要单独核实
-
-Muse 报告 `--offline` 当前用户名是 `Offline`，而用户目标为 `DouDou`。下次联调需先核实 HeadlessMC 的离线账号创建/选择方法，在实际登录时使用 DouDou。不要把凭据放进 GitHub，也不要通过改服务端 mod 来处理昵称。
+参考：[Issue #2 真实两轮联调](https://github.com/Huhabubu/quant_test/issues/2)；[PR #3](https://github.com/Huhabubu/quant_test/pull/3)。
