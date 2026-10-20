@@ -40,6 +40,9 @@ class ModMailbox:
         timestamp = state.get("captured_at_ms")
         if type(timestamp) is not int or abs(time.time() * 1000 - timestamp) > self.freshness_ms:
             raise ModUnavailable("游戏状态过期（可能已退出/客户端暂停）")
+        session = state.get("session_id")
+        if not isinstance(session, str) or len(session) != 32 or any(c not in "0123456789abcdef" for c in session):
+            raise ModUnavailable("游戏状态缺少有效的会话标识")
         if not isinstance(state.get("in_world"), bool):
             raise ModUnavailable("游戏状态缺少 in_world")
         return state
@@ -77,7 +80,9 @@ class ModMailbox:
         id_ = uuid4().hex
         final = commands / (id_ + ".json")
         temp = commands / ("." + id_ + ".tmp")
-        payload = json.dumps(checked, ensure_ascii=False, separators=(",", ":")).encode()
+        payload = json.dumps(dict(checked, session_id=state["session_id"],
+                                  created_at_ms=int(time.time() * 1000)),
+                             ensure_ascii=False, separators=(",", ":")).encode()
         try:
             with temp.open("xb") as fp:
                 os.chmod(temp, 0o600)
