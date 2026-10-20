@@ -84,4 +84,4 @@ python3 -m minecraft_doudou.mod_cli --root "$ROOT" sleep 1 64 2
 - The wider scan runs every **40 client ticks (~2 s at 20 TPS)**; health, item counts and durability remain updated every 10 ticks (~0.5s).
 - State JSON includes nearby_scan_radius, nearby_scan_vertical_range and nearby_scan_updated_at_ms. Cached usable_now can be 2 seconds old; game actions still check the **4.5 block interaction reach** and line-of-sight before executing.
 - Only ALREADY LOADED chunks are inspected; this does not force distant chunk loads.
-- The installed 0.1.0 JAR does not update by changing the Python files. Obtain a new build candidate and install during the NEXT safe cold boot; do not hot-swap a live mod.
+- The installed 0.1.0 JAR does not update by changing the Python files. The expanded-perception build is version 0.1.1; remove the old 0.1.0 JAR before installing 0.1.1 to avoid a duplicate mod ID. Obtain a new build candidate and install during the NEXT safe cold boot; do not hot-swap a live mod.
