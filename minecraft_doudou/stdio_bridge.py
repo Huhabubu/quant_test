@@ -15,6 +15,7 @@ from .bridge import ConsoleUnavailable, Controller, InvalidCommand, make_handler
 from .preflight import PreflightError, build_java_argv, inspect_installation
 from .events import MinecraftChatEvents
 from .account_state import AccountSelectionProbe
+from .mod_mailbox import ModMailbox
 
 
 class StdioConsole:
@@ -128,9 +129,11 @@ def main():
         allowed_sender=args.owner_name,
     )
     probe = AccountSelectionProbe(args.account_state_file)
+    mailbox = ModMailbox(os.path.join(installation["instance"], "config", "doudou-io"))
     controller = Controller(
         console, args.server_host, args.server_port,
-        mcdir=installation["mcdir"], events=events, account_probe=probe
+        mcdir=installation["mcdir"], events=events, account_probe=probe,
+        mailbox=mailbox
     )
     # Bind BEFORE launching Java so port conflicts cannot spawn a second client.
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(controller, token))
