@@ -90,6 +90,18 @@ class ModMailboxTests(unittest.TestCase):
         self.assertEqual(self.box.result(id_)["status"], "completed")
         self.assertFalse(self.box.result(id_)["result"]["verified"])
 
+    def test_in_progress_eating_does_not_appear_crashed(self):
+        request = self.box.submit({"action": "eat"})
+        id_ = request["id"]
+        pending = self.root / "commands" / (id_ + ".json")
+        pending.rename(self.root / "commands" / (id_ + ".processing"))
+        self.write_state(eating_active=True, eating_id=id_, eating_ticks_elapsed=32)
+        result = self.box.result(id_)
+        self.assertEqual(result["status"], "in_progress")
+        self.assertEqual(result["ticks_elapsed"], 32)
+        self.write_state(eating_active=False)
+        self.assertEqual(self.box.result(id_)["status"], "unknown_after_claim")
+
     def test_fail_closed_when_not_in_world(self):
         for values in ({"in_world": False}, {"dead": True}):
             self.write_state(**values)
