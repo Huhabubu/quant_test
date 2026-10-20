@@ -65,7 +65,7 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(answer["verified"])
         self.assertTrue(controller.status()["profile_preparation_submitted"])
         self.assertEqual(console.commands, [
-            "config set hmc.mcdir /tmp/game",
+            "config set hmc.files.mc /tmp/game",
             "account -p offline select DouDou",
         ])
         with self.assertRaises(InvalidCommand):
@@ -191,7 +191,7 @@ class HttpTests(unittest.TestCase):
         self.assertFalse(data["verified"])
         self.assertEqual(self.request("POST", "/v1/launch", {})[0], 400)
         self.assertEqual(self.console.commands, [
-            "config set hmc.mcdir /tmp/game",
+            "config set hmc.files.mc /tmp/game",
             "account -p offline select DouDou",
             'launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"'
         ])
