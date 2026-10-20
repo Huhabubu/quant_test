@@ -56,6 +56,17 @@ class BridgeTests(unittest.TestCase):
                     controller.move(direction, duration)
         self.assertEqual(len(console.commands), 2)
 
+    def test_one_shot_exact_launch(self):
+        console = FakeConsole()
+        controller = Controller(console, "example.org", 25565)
+        self.assertEqual(controller.launch(), {"accepted": True, "verified": False})
+        self.assertEqual(console.commands, [
+            'launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"'
+        ])
+        with self.assertRaises(InvalidCommand):
+            controller.launch()
+        self.assertEqual(len(console.commands), 1)
+
     def test_tmux_literal_command_and_enter(self):
         calls = []
 
@@ -146,6 +157,16 @@ class HttpTests(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertEqual(self.request("POST", "/v1/move", body)[0], 400)
         self.assertEqual(len(self.console.commands), 1)
+
+    def test_launch_endpoint_once(self):
+        self.assertEqual(self.request("POST", "/v1/launch", {"command": "quit"})[0], 400)
+        status, data = self.request("POST", "/v1/launch", {})
+        self.assertEqual(status, 202)
+        self.assertFalse(data["verified"])
+        self.assertEqual(self.request("POST", "/v1/launch", {})[0], 400)
+        self.assertEqual(self.console.commands, [
+            'launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"'
+        ])
 
     def test_fixed_connect(self):
         self.assertEqual(self.request("POST", "/v1/connect", {})[0], 202)
