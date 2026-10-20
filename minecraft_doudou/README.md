@@ -57,7 +57,7 @@ python3 -m minecraft_doudou.stdio_bridge \
 | 1 | GET /v1/status | 仅确认 launcher 进程在运行 |
 | 2 | GET /v1/output | 检查 HeadlessMC 控制台已就绪 |
 | 3 | POST /v1/prepare，JSON {} | 本会话设置正确 mcdir、选择 DouDou |
-| 4 | GET /v1/output | GET /v1/account 要返回 verified:true（必须本会话新写入已选账号文件）；同时检查输出没有报错 |
+| 4 | GET /v1/output | GET /v1/output 并 GET /v1/account（必须返回 verified:true）；确认本会话已选 DouDou、且控制台无报错 |
 | 5 | POST /v1/launch，JSON {} | 仅此一次，执行上面 5G 的游戏命令 |
 | 6 | GET /v1/output | 核查版本 .88、用户 DouDou、主菜单加载 |
 | 7 | POST /v1/connect，JSON {} | 主菜单后连接预配置的服务器 |
@@ -113,7 +113,7 @@ curl -sS -X POST -H "Authorization: Bearer $DOUDOU_BRIDGE_TOKEN" \
 
 ## 16:35 新回报：实时聊天与状态感知的正确边界
 
-Muse 已验证：原有多级 worker 轮询会产生 1–2 分钟延迟；目前直接 tail -F latest.log 并唤醒主 agent，端到端约 **10–20 秒**，主要消耗在 Muse 本身。**本桥不承诺绕过 Muse 的唤醒/推理延迟。** 它提供不再依赖 shell 管道的本地增量事件缓冲。Muse 可以继续使用已经成功的 tail 机制，先测新 /v1/events 的延迟和完整性，再决定是否切换。
+Muse 已验证：原有多级 worker 轮询会产生 1–2 分钟延迟；目前直接 tail -F latest.log 并唤醒主 agent，端到端约 **10–20 秒**，主要消耗在 Muse 本身。**本桥不承诺绕过 Muse 的唤醒/推理延迟。若 Muse 现行日志钩子已能在约 10–20 秒内完成回复，优先保持其正常运行，比较新桥的事件读取稳定性后再切换。** 它提供不再依赖 shell 管道的本地增量事件缓冲。Muse 可以继续使用已经成功的 tail 机制，先测新 /v1/events 的延迟和完整性，再决定是否切换。
 
 示例（在本地已注入同一 Token 的环境）：
 
@@ -129,5 +129,5 @@ curl -sS -G -H "Authorization: Bearer $DOUDOU_BRIDGE_TOKEN"   --data-urlencode "
 
 - 终端未换行的 JLine 文本会在 /v1/output 的 partial 字段即时可见。JLine 的重复绘制提示可能仍含 ANSI 序列；
 - Launcher 退出码在 /v1/output 的 exit_code 和 /v1/status 的 launcher_exit_code；标准错误与标准输出在 PTY 上合并；
-- 当前进程输出会写入仅所有者可读的 ~/ .local/state/doudou-bridge/launcher.pty.log（实际路径为 ~/.local/state/doudou-bridge/launcher.pty.log），大于 2MB 后轮转为 launcher.pty.previous.log。日志可能包含玩家聊天，分享前脱敏；
+- 当前进程输出会写入仅所有者可读的 ~/.local/state/doudou-bridge/launcher.pty.log，大于 2MB 后轮转为 launcher.pty.previous.log。日志可能包含玩家聊天，分享前脱敏；
 - 启动时 --account-state-file 必须指向 HeadlessMC **实际使用**的 last/.accounts.json。上例 /root/... 是 Muse 曾报告的路径，不是硬编码事实；若运行用户或存储路径不同，应先由 Muse 核查。prepare 后 /v1/account 返回 verified:true 才允许 launch，避免仍用 Offline 账号。
