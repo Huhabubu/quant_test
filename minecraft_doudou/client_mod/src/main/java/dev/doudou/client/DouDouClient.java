@@ -59,6 +59,9 @@ public final class DouDouClient {
         private static final int PERCEPTION_INTERVAL_TICKS = 40;
         private static JsonArray cachedNearby = new JsonArray();
         private static Object cachedLevel;
+        private static LandmarkMemory memory;
+        private static JsonArray cachedEntities = new JsonArray();
+        private static long entitiesScannedAtMs;
         private static long nearbyScannedAtMs;
 
         @SubscribeEvent
@@ -69,6 +72,7 @@ public final class DouDouClient {
                 try {
                     Files.createDirectories(root.resolve("commands"));
                     Files.createDirectories(root.resolve("results"));
+                    memory = new LandmarkMemory(root);
                 } catch (IOException e) {
                     return;
                 }
@@ -199,7 +203,9 @@ public final class DouDouClient {
             if (mc.player == null || mc.level == null) {
                 cachedNearby = new JsonArray();
                 cachedLevel = null;
+                cachedEntities = new JsonArray();
                 nearbyScannedAtMs = 0;
+                entitiesScannedAtMs = 0;
                 return state;
             }
 
@@ -243,6 +249,18 @@ public final class DouDouClient {
             state.addProperty("nearby_scan_vertical_range", PERCEPTION_VERTICAL);
             state.addProperty("nearby_scan_updated_at_ms", nearbyScannedAtMs);
             state.add("nearby_interactables", cachedNearby);
+            String scope = LandmarkMemory.scope(mc);
+            state.addProperty("landmark_memory_available", scope != null && memory != null);
+            state.addProperty("dimension", LandmarkMemory.dimension(mc));
+            state.add("remembered_landmarks", memory == null
+                ? new JsonArray() : memory.recalled(scope, nearbyScannedAtMs, 256));
+            if (entitiesScannedAtMs == 0 || ticks % 20 == 0 || cachedLevel != mc.level) {
+                cachedEntities = NearbyEntities.scan(mc);
+                entitiesScannedAtMs = System.currentTimeMillis();
+            }
+            state.addProperty("nearby_entity_radius", NearbyEntities.RADIUS);
+            state.addProperty("nearby_entities_updated_at_ms", entitiesScannedAtMs);
+            state.add("nearby_entities", cachedEntities);
             return state;
         }
 
@@ -261,6 +279,9 @@ public final class DouDouClient {
             ArrayList<JsonObject> found = new ArrayList<>();
             BlockPos base = mc.player.blockPosition();
             Vec3 eye = mc.player.getEyePosition();
+            String scope = LandmarkMemory.scope(mc);
+            String dimension = LandmarkMemory.dimension(mc);
+            long seenAt = System.currentTimeMillis();
             final double rangeSquared = PERCEPTION_RADIUS * PERCEPTION_RADIUS;
             for (int dx = -PERCEPTION_RADIUS; dx <= PERCEPTION_RADIUS; dx++) {
                 for (int dy = -PERCEPTION_VERTICAL; dy <= PERCEPTION_VERTICAL; dy++) {
@@ -271,11 +292,20 @@ public final class DouDouClient {
                         if (distSquared > rangeSquared) continue;
                         if (!mc.level.hasChunkAt(pos)) continue;
                         BlockState state = mc.level.getBlockState(pos);
+                        String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
                         boolean bed = state.getBlock() instanceof BedBlock;
                         boolean box = state.getBlock() instanceof ChestBlock
                             || state.getBlock() instanceof BarrelBlock
                             || state.getBlock() instanceof ShulkerBoxBlock;
-                        if (!bed && !box) continue;
+                        boolean workstation = LandmarkMemory.isWorkstation(blockId);
+                        if (!bed && !box && !workstation) {
+                            if (memory != null) memory.forgetIfMissing(scope, pos);
+                            continue;
+                        }
+                        String kind = bed ? "bed" : box ? "container" : "workstation";
+                        if (memory != null) {
+                            memory.observe(scope, dimension, pos, blockId, kind, seenAt);
+                        }
                         double distance = Math.sqrt(distSquared);
                         boolean inReach = distance <= 4.5;
                         boolean visible = false;
@@ -289,14 +319,15 @@ public final class DouDouClient {
                         block.addProperty("x", pos.getX());
                         block.addProperty("y", pos.getY());
                         block.addProperty("z", pos.getZ());
-                        block.addProperty("block_id", BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
-                        block.addProperty("kind", bed ? "bed" : "container");
+                        block.addProperty("block_id", blockId);
+                        block.addProperty("kind", kind);
                         block.addProperty("distance", Math.round(distance * 100.0) / 100.0);
-                        block.addProperty("usable_now", inReach && visible);
+                        block.addProperty("usable_now", !workstation && inReach && visible);
                         found.add(block);
                     }
                 }
             }
+            if (memory != null) memory.flushIfNeeded(seenAt);
             found.sort(Comparator.comparingDouble(block -> block.get("distance").getAsDouble()));
             JsonArray result = new JsonArray();
             for (int i = 0; i < Math.min(found.size(), PERCEPTION_MAX_TARGETS); i++) {
