@@ -1,3 +1,13 @@
+# DouDou 0.2.3 运行稳定性更新（2026-10-20）
+
+**当前首选流程：** [0.2.3 tmux 稳定启动 / 重连手册](RUNBOOK_0_2_3.md)。
+
+下方为之前的 PTY 实验阶段文档，属于历史记录，**不是当前推荐的启动办法**。Muse 已确认游戏 JVM 使用 **-Xmx3G** 可运行，而 -Xmx5G 曾遭遇 OOM；新的 Python tmux + HTTP 架构不会在桥退出时杀死 HeadlessMC，且支持重连。游戏 Mod 仍使用已实测的 v0.2.2 JAR，不需要升级。
+
+目前只完成自动化代码与 CI，**尚未在 Muse VM 验证 tmux 重连**；也尚未实现整机 VM 开机自动运行。不应该在 DouDou 正在在线时切换控制架构。
+
+---
+
 # DouDou × Minecraft × Muse｜2026-10-20 成功联调经验固化
 
 **阶段：Draft PR #3，修正下一次启动。** Muse 于 2026-10-20 13:23 报告，用手动 PTY 会话已经成功进入真实 Minecraft 服务器，英文聊天和移动已验证。新桥的自动准备与字符编码改动**仍需云 VM 实机验证**。如果现有 DouDou 还在线，不要启动第二份客户端或替换正在运行的进程。
@@ -7,8 +17,8 @@
 - Minecraft 26.2；NeoForge **26.2.0.88**；JDK 25；hmc-specifics 26.2-3.0.0。
 - HeadlessMC 位于 Muse VM 的 /home/hatch/workspace/headlessmc/（实际路径以 Muse 现场核对为准）。
 - 游戏预装路径：游戏根目录 gamedir，实例 gamedir/neoforge-26.2。
-- 第二阶段成功的游戏命令：launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"。
-- 7.7GB VM 上堆内存 **5G** 稳定，6G 曾被 OOM killer 杀。
+- 第二阶段成功的游戏命令：launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx3G"。
+- 7.7GB VM 上堆内存 **3G** 为最新实测稳定参数，6G 曾被 OOM killer 杀。
 - 服务器 mod 注册表已验证成功；World Bosses + GeckoLib 已加入；JourneyMap 禁用后，Muse 报告进服稳定。
 - VM 可能无预警重启并回滚启动器配置。**不要依赖启动器配置持久化，也不要启用尚未经验证的自动重启看门狗。**
 
