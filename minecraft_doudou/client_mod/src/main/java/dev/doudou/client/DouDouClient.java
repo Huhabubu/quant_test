@@ -50,6 +50,7 @@ public final class DouDouClient {
     public static final class ClientEvents {
         private static Path root;
         private static int ticks;
+        private static final String SESSION_ID = UUID.randomUUID().toString().replace("-", "");
 
         @SubscribeEvent
         public static void onClientTick(ClientTickEvent.Post ignored) {
@@ -92,7 +93,14 @@ public final class DouDouClient {
                     try {
                         JsonObject request = JsonParser.parseString(
                             Files.readString(processing, StandardCharsets.UTF_8)).getAsJsonObject();
-                        answer = execute(mc, request);
+                        long created = request.get("created_at_ms").getAsLong();
+                        String session = request.get("session_id").getAsString();
+                        long age = System.currentTimeMillis() - created;
+                        if (!SESSION_ID.equals(session) || age < -1000 || age > 10000) {
+                            answer = error("stale_or_foreign_client_session");
+                        } else {
+                            answer = execute(mc, request);
+                        }
                     } catch (Exception ex) {
                         answer = error("invalid_request_or_game_state");
                     }
@@ -176,6 +184,7 @@ public final class DouDouClient {
         private static JsonObject snapshot(Minecraft mc) {
             JsonObject state = new JsonObject();
             state.addProperty("schema", 1);
+            state.addProperty("session_id", SESSION_ID);
             state.addProperty("captured_at_ms", System.currentTimeMillis());
             state.addProperty("in_world", mc.player != null && mc.level != null);
             if (mc.player == null || mc.level == null) return state;
