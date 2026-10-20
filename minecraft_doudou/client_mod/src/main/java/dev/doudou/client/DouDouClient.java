@@ -70,7 +70,7 @@ public final class DouDouClient {
         private record EatSession(String id, int slot, Item item, int countBefore,
                                   int hungerBefore, int tickStarted, long startedAtMs,
                                   boolean sawUsing) {
-            EatSession sawUsing() {
+            EatSession withSawUsing() {
                 return new EatSession(id, slot, item, countBefore, hungerBefore,
                     tickStarted, startedAtMs, true);
             }
@@ -257,7 +257,7 @@ public final class DouDouClient {
                 return;
             }
             boolean usingNow = mc.player.isUsingItem();
-            if (usingNow && !task.sawUsing()) eating = task.sawUsing();
+            if (usingNow && !task.sawUsing()) eating = task.withSawUsing();
             if (ticks - task.tickStarted() >= MAX_EAT_TICKS
                 || System.currentTimeMillis() - task.startedAtMs() >= 8000) {
                 finishEating(mc, "eat_timed_out", false);
