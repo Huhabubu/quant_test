@@ -23,6 +23,11 @@ final class NearbyEntities {
     static final int RADIUS = 24;
     private static final int MAX_ENTITIES = 64;
 
+    static boolean isCorpse(Entity entity) {
+        return "corpse:corpse".equals(
+            BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
+    }
+
     static JsonArray scan(Minecraft mc) {
         JsonArray result = new JsonArray();
         if (mc.player == null || mc.level == null) return result;
@@ -31,7 +36,8 @@ final class NearbyEntities {
             origin.z - RADIUS, origin.x + RADIUS, origin.y + RADIUS, origin.z + RADIUS);
         ArrayList<Entity> found = new ArrayList<>();
         for (Entity entity : mc.level.getEntities(mc.player, bounds,
-                 e -> e instanceof Player || e instanceof Mob || e instanceof ItemEntity)) {
+                 e -> e instanceof Player || e instanceof Mob || e instanceof ItemEntity
+                    || isCorpse(e))) {
             if (!entity.isRemoved() && entity.position().distanceToSqr(origin) <= RADIUS * RADIUS) {
                 found.add(entity);
             }
@@ -40,13 +46,16 @@ final class NearbyEntities {
         for (int i = 0; i < Math.min(MAX_ENTITIES, found.size()); i++) {
             Entity entity = found.get(i);
             JsonObject item = new JsonObject();
-            String category = entity instanceof Player ? "player"
+            String category = isCorpse(entity) ? "corpse"
+                : entity instanceof Player ? "player"
                 : entity instanceof ItemEntity ? "dropped_item"
                 : entity.getType().getCategory() == MobCategory.MONSTER ? "hostile"
                 : entity instanceof Animal ? "animal" : "other_mob";
             item.addProperty("category", category);
             item.addProperty("type", BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
             item.addProperty("name", entity.getName().getString());
+            item.addProperty("uuid", entity.getUUID().toString());
+            item.addProperty("entity_id", entity.getId());
             item.addProperty("x", entity.getX());
             item.addProperty("y", entity.getY());
             item.addProperty("z", entity.getZ());
