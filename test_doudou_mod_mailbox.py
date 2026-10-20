@@ -37,6 +37,7 @@ class ModMailboxTests(unittest.TestCase):
             "captured_at_ms": int(time.time() * 1000),
             "in_world": True,
             "session_id": "e" * 32,
+            "landmark_memory_scope": "a" * 64,
             "dead": False,
             "hunger": 6,
             "inventory": [
@@ -100,6 +101,38 @@ class ModMailboxTests(unittest.TestCase):
         with self.assertRaises(ModUnavailable):
             self.box.submit({"action": "eat"})
 
+    def write_landmarks(self):
+        records = [
+            {"scope": "a" * 64, "dimension": "overworld", "x": 4, "y": 69,
+             "z": -48, "kind": "container", "block_id": "minecraft:chest",
+             "last_seen_at_ms": 10},
+            {"scope": "a" * 64, "dimension": "overworld", "x": -4, "y": 65,
+             "z": -44, "kind": "bed", "block_id": "minecraft:white_bed",
+             "last_seen_at_ms": 12},
+            {"scope": "b" * 64, "dimension": "the_nether", "x": 4, "y": 69,
+             "z": -48, "kind": "container", "block_id": "minecraft:chest",
+             "last_seen_at_ms": 20},
+        ]
+        (self.root / "landmarks.json").write_text(json.dumps(
+            {"schema": 1, "entries": records}), encoding="utf-8")
+
+    def test_landmark_query_scoped_durable_and_not_assumed_current(self):
+        self.write_landmarks()
+        answer = self.box.landmarks()
+        self.assertEqual(answer["count_matching"], 2)
+        self.assertEqual(answer["entries"][0]["kind"], "bed")
+        self.assertIn("historical", answer["verification"])
+        self.assertEqual(self.box.landmarks("container")["entries"][0]["x"], 4)
+        self.assertEqual(len(self.box.landmarks(limit=1)["entries"]), 1)
+        self.assertTrue(self.box.landmarks(limit=1)["truncated"])
+        with self.assertRaises(InvalidModAction):
+            self.box.landmarks(kind="../../etc/passwd")
+        with self.assertRaises(InvalidModAction):
+            self.box.landmarks(limit=100000)
+        self.write_state(landmark_memory_scope="invalid")
+        with self.assertRaises(ModUnavailable):
+            self.box.landmarks()
+
     def test_bounded_block_interaction_payload(self):
         result = self.box.submit({"action": "sleep", "x": 3, "y": 65, "z": -4})
         self.assertEqual(self.box.result(result["id"])["status"], "queued")
@@ -122,6 +155,10 @@ class ModMailboxTests(unittest.TestCase):
                 return code, data
             self.assertEqual(req("GET", "/v1/game-state", token="wrong")[0], 401)
             self.assertEqual(req("GET", "/v1/game-state")[1]["inventory"][1]["count"], 42)
+            self.write_landmarks()
+            self.assertEqual(req("GET", "/v1/landmarks?kind=bed")[1]["entries"][0]["kind"], "bed")
+            self.assertEqual(req("GET", "/v1/landmarks?kind=bed", token="wrong")[0], 401)
+            self.assertEqual(req("GET", "/v1/landmarks?limit=0")[0], 400)
             self.assertEqual(req("POST", "/v1/game-action", {"action": "jump"})[0], 400)
             code, submitted = req("POST", "/v1/game-action", {"action": "eat"})
             self.assertEqual(code, 202)
