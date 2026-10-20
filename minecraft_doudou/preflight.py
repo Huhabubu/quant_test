@@ -57,7 +57,6 @@ def build_java_argv(command, mcdir):
             raise PreflightError("请用 --mcdir 设置唯一游戏目录，不允许重复或冲突的 JVM 属性")
     # Set launcher console charset explicitly. Actual in-game Chinese still requires verification.
     prefix = [
-        "-Dhmc.mcdir=" + mcdir,
         "-Dhmc.files.mc=" + mcdir,
         "-Dfile.encoding=UTF-8",
         "-Dstdin.encoding=UTF-8",
