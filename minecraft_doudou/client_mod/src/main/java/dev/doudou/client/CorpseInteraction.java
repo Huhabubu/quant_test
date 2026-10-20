@@ -12,6 +12,7 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
@@ -101,7 +102,8 @@ final class CorpseInteraction {
             eye, middle, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, mc.player));
         if (trace.getType() != HitResult.Type.MISS) return error("corpse_line_of_sight_blocked");
 
-        mc.gameMode.interact(mc.player, corpse, InteractionHand.MAIN_HAND);
+        mc.gameMode.interact(mc.player, corpse,
+            new EntityHitResult(corpse, middle), InteractionHand.MAIN_HAND);
         return sent("corpse_interaction_sent", target);
     }
 
