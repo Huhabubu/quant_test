@@ -70,7 +70,7 @@ class TmuxConsole:
 
 
 class Controller:
-    def __init__(self, console, target_host, target_port):
+    def __init__(self, console, target_host, target_port, mcdir=None, player_name="DouDou"):
         if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", target_host):
             raise ValueError("无效的服务器域名")
         if not 1 <= target_port <= 65535:
@@ -78,6 +78,13 @@ class Controller:
         self.console = console
         self.target_host = target_host
         self.target_port = target_port
+        if mcdir is not None and not re.fullmatch(r"/[A-Za-z0-9_./-]+", mcdir):
+            raise ValueError("游戏目录必须是无空格的安全绝对路径")
+        if not re.fullmatch(r"[A-Za-z0-9_]{3,16}", player_name):
+            raise ValueError("无效的玩家昵称")
+        self.mcdir = mcdir
+        self.player_name = player_name
+        self._prepared = False
         self._launch_lock = threading.Lock()
         self._launch_submitted = False
 
@@ -85,8 +92,31 @@ class Controller:
         return {
             "console_available": self.console.available(),
             "game_loaded": None,
+            "profile_preparation_submitted": self._prepared,
+            "launch_submitted": self._launch_submitted,
             "server_connected": None,
             "note": "只验证控制台进程可用；尚不能证明客户端加载或连服成功",
+        }
+
+    def prepare(self):
+        """Reapply both HMC profile and existing offline account in this session.
+
+        Console echoes/logs must be reviewed: send() cannot prove selection worked.
+        This does NOT create or replace the persisted account UUID.
+        """
+        with self._launch_lock:
+            if self._launch_submitted:
+                raise InvalidCommand("游戏已提交启动，不能重新修改启动配置")
+            if self._prepared:
+                raise InvalidCommand("启动配置已发送，不允许重复准备")
+            if self.mcdir is None:
+                raise InvalidCommand("未指定 --mcdir，拒绝准备启动配置")
+            self.console.send("config set hmc.mcdir " + self.mcdir)
+            self.console.send("account -p offline select " + self.player_name)
+            self._prepared = True
+        return {
+            "accepted": True, "verified": False,
+            "note": "请先查看 /v1/output，确认离线账号 DouDou 已存在且未报错，再调用 launch",
         }
 
     def launch(self):
@@ -94,6 +124,8 @@ class Controller:
         with self._launch_lock:
             if self._launch_submitted:
                 raise InvalidCommand("本次控制台已提交过 launch；禁止重复启动")
+            if self.mcdir is not None and not self._prepared:
+                raise InvalidCommand("必须先调用 /v1/prepare 并核对控制台输出")
             self.console.send('launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"')
             self._launch_submitted = True
         return {"accepted": True, "verified": False}
@@ -161,7 +193,7 @@ def make_handler(controller, token):
         def do_POST(self):
             if not self.authorized():
                 return
-            if self.path not in ("/v1/chat", "/v1/connect", "/v1/move", "/v1/launch"):
+            if self.path not in ("/v1/chat", "/v1/connect", "/v1/move", "/v1/launch", "/v1/prepare"):
                 self.reply(404, {"error": "not_found"})
                 return
             try:
@@ -175,6 +207,10 @@ def make_handler(controller, token):
                     if set(body) != {"text"}:
                         raise InvalidCommand("需要且只允许 text 字段")
                     result = controller.chat(body["text"])
+                elif self.path == "/v1/prepare":
+                    if body:
+                        raise InvalidCommand("prepare 请求体必须为空对象")
+                    result = controller.prepare()
                 elif self.path == "/v1/launch":
                     if body:
                         raise InvalidCommand("launch 请求体必须为空对象")
