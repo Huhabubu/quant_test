@@ -7,9 +7,10 @@ import java.util.Comparator;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -30,8 +31,7 @@ final class NearbyEntities {
             origin.z - RADIUS, origin.x + RADIUS, origin.y + RADIUS, origin.z + RADIUS);
         ArrayList<Entity> found = new ArrayList<>();
         for (Entity entity : mc.level.getEntities(mc.player, bounds,
-                 e -> e instanceof Player || e instanceof Monster
-                   || e instanceof Animal || e instanceof ItemEntity)) {
+                 e -> e instanceof Player || e instanceof Mob || e instanceof ItemEntity)) {
             if (!entity.isRemoved() && entity.position().distanceToSqr(origin) <= RADIUS * RADIUS) {
                 found.add(entity);
             }
@@ -41,8 +41,9 @@ final class NearbyEntities {
             Entity entity = found.get(i);
             JsonObject item = new JsonObject();
             String category = entity instanceof Player ? "player"
-                : entity instanceof Monster ? "hostile"
-                : entity instanceof Animal ? "animal" : "dropped_item";
+                : entity instanceof ItemEntity ? "dropped_item"
+                : entity.getType().getCategory() == MobCategory.MONSTER ? "hostile"
+                : entity instanceof Animal ? "animal" : "other_mob";
             item.addProperty("category", category);
             item.addProperty("type", BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
             item.addProperty("name", entity.getName().getString());
