@@ -19,6 +19,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.level.ClipContext;
@@ -63,6 +64,17 @@ public final class DouDouClient {
         private static JsonArray cachedEntities = new JsonArray();
         private static long entitiesScannedAtMs;
         private static long nearbyScannedAtMs;
+        private static EatSession eating;
+        private static final int MAX_EAT_TICKS = 120;
+
+        private record EatSession(String id, int slot, Item item, int countBefore,
+                                  int hungerBefore, int tickStarted, long startedAtMs,
+                                  boolean sawUsing) {
+            EatSession sawUsing() {
+                return new EatSession(id, slot, item, countBefore, hungerBefore,
+                    tickStarted, startedAtMs, true);
+            }
+        }
 
         @SubscribeEvent
         public static void onClientTick(ClientTickEvent.Post ignored) {
@@ -80,6 +92,7 @@ public final class DouDouClient {
 
             // One command per tick prevents a flood from starving MC frames.
             runOneCommand(mc);
+            tickEating(mc);
             if (++ticks % 10 == 0) {
                 JsonObject state = snapshot(mc);
                 try {
@@ -112,11 +125,14 @@ public final class DouDouClient {
                         if (!SESSION_ID.equals(session) || age < -1000 || age > 10000) {
                             answer = error("stale_or_foreign_client_session");
                         } else {
-                            answer = execute(mc, request);
+                            answer = execute(mc, request, id);
                         }
                     } catch (Exception ex) {
                         answer = error("invalid_request_or_game_state");
                     }
+                    // Eat remains claimed until client-tick verification; no
+                    // premature accepted=true result is written.
+                    if (answer == null) return;
                     answer.addProperty("id", id);
                     answer.addProperty("issued_at_ms", System.currentTimeMillis());
                     try {
@@ -132,7 +148,7 @@ public final class DouDouClient {
             }
         }
 
-        private static JsonObject execute(Minecraft mc, JsonObject request) {
+        private static JsonObject execute(Minecraft mc, JsonObject request, String id) {
             if (mc.player == null || mc.level == null || mc.gameMode == null) {
                 return error("not_in_world");
             }
@@ -143,13 +159,17 @@ public final class DouDouClient {
             String action = request.get("action").getAsString();
 
             if ("eat".equals(action)) {
+                if (eating != null) return error("eating_in_progress");
+                if (mc.gui.screen() != null) return error("screen_open");
                 if (mc.player.isUsingItem()) return error("already_using_item");
                 if (!mc.player.getFoodData().needsFood()) return error("not_hungry");
                 int slot = request.has("slot") ? request.get("slot").getAsInt() : -1;
                 if (slot < -1 || slot > 8) return error("invalid_hotbar_slot");
                 if (slot == -1) {
                     for (int i = 0; i < 9; i++) {
-                        if (mc.player.getInventory().getItem(i).has(DataComponents.CONSUMABLE)) {
+                        ItemStack candidate = mc.player.getInventory().getItem(i);
+                        if (candidate.has(DataComponents.FOOD)
+                            && candidate.has(DataComponents.CONSUMABLE)) {
                             slot = i;
                             break;
                         }
@@ -157,11 +177,23 @@ public final class DouDouClient {
                 }
                 if (slot < 0) return error("no_hotbar_food");
                 ItemStack food = mc.player.getInventory().getItem(slot);
-                if (food.isEmpty() || !food.has(DataComponents.CONSUMABLE)) return error("slot_not_consumable");
+                if (food.isEmpty() || !food.has(DataComponents.FOOD)
+                    || !food.has(DataComponents.CONSUMABLE)) return error("slot_not_food");
+
+                int hungerBefore = mc.player.getFoodData().getFoodLevel();
+                int countBefore = food.getCount();
                 mc.player.getInventory().setSelectedSlot(slot);
-                // Actual protocol interaction (not a GLFW mouse event).
+
+                // The single direct useItem call in 0.1.x stopped immediately.
+                // Keep the real Minecraft key-binding HELD across future ticks
+                // so vanilla uses/finishes the item; stop on observed change,
+                // interruption or bounded timeout. No GLFW/window focus needed.
+                mc.options.keyUse.setDown(true);
                 mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
-                return dispatched("eat_sent", "Verify hunger or item count changes in a later snapshot");
+                eating = new EatSession(id, slot, food.getItem(), countBefore,
+                    hungerBefore, ticks, System.currentTimeMillis(),
+                    mc.player.isUsingItem());
+                return null;  // Deferred result written by tickEating().
             }
 
             if ("open_container".equals(action) || "sleep".equals(action)) {
@@ -192,6 +224,83 @@ public final class DouDouClient {
                 return dispatched("block_use_sent", "Verify the opened screen or sleeping flag later");
             }
             return error("unsupported_action");
+        }
+
+        private static void tickEating(Minecraft mc) {
+            if (eating == null) return;
+            EatSession task = eating;
+            if (mc.player == null || mc.level == null || mc.gameMode == null
+                || mc.player.isDeadOrDying()) {
+                finishEating(mc, "not_in_world_or_dead", false);
+                return;
+            }
+            if (mc.gui.screen() != null) {
+                finishEating(mc, "screen_interrupted", false);
+                return;
+            }
+            if (mc.player.getInventory().getSelectedSlot() != task.slot()) {
+                finishEating(mc, "selected_slot_changed", false);
+                return;
+            }
+            ItemStack stack = mc.player.getInventory().getItem(task.slot());
+            int countAfter = stack.isEmpty() ? 0 : stack.getCount();
+            int hungerAfter = mc.player.getFoodData().getFoodLevel();
+            // Server-synchronized inventory/hunger changes are stronger proof
+            // than 'useItem sent' or merely seeing the use animation.
+            if (countAfter < task.countBefore() || hungerAfter > task.hungerBefore()) {
+                finishEating(mc, "food_consumed", true);
+                return;
+            }
+            if (stack.isEmpty() || stack.getItem() != task.item()) {
+                finishEating(mc, "food_item_changed", false);
+                return;
+            }
+            boolean usingNow = mc.player.isUsingItem();
+            if (usingNow && !task.sawUsing()) eating = task.sawUsing();
+            if (ticks - task.tickStarted() >= MAX_EAT_TICKS
+                || System.currentTimeMillis() - task.startedAtMs() >= 8000) {
+                finishEating(mc, "eat_timed_out", false);
+                return;
+            }
+            // Keep this pressed every tick. Let vanilla MC handle continuous use.
+            mc.options.keyUse.setDown(true);
+        }
+
+        private static void finishEating(Minecraft mc, String reason, boolean verified) {
+            EatSession task = eating;
+            if (task == null) return;
+            eating = null;
+            // Release the synthetic input on ALL exits, including timeout/death.
+            mc.options.keyUse.setDown(false);
+            int countAfter = -1;
+            int hungerAfter = -1;
+            if (mc.player != null) {
+                ItemStack stack = mc.player.getInventory().getItem(task.slot());
+                countAfter = stack.isEmpty() ? 0 : stack.getCount();
+                hungerAfter = mc.player.getFoodData().getFoodLevel();
+            }
+            JsonObject result = new JsonObject();
+            result.addProperty("id", task.id());
+            result.addProperty("accepted", verified);
+            result.addProperty("verified", verified);
+            result.addProperty("reason", reason);
+            result.addProperty("food_slot", task.slot());
+            result.addProperty("food_count_before", task.countBefore());
+            result.addProperty("food_count_after", countAfter);
+            result.addProperty("hunger_before", task.hungerBefore());
+            result.addProperty("hunger_after", hungerAfter);
+            result.addProperty("saw_using_item", task.sawUsing()
+                || (mc.player != null && mc.player.isUsingItem()));
+            result.addProperty("ticks_elapsed", ticks - task.tickStarted());
+            result.addProperty("finished_at_ms", System.currentTimeMillis());
+            try {
+                atomicJson(root.resolve("results").resolve(task.id() + ".json"), result);
+                Files.deleteIfExists(root.resolve("commands").resolve(
+                    task.id() + ".processing"));
+            } catch (IOException writeFailure) {
+                // Leave .processing in place, never auto-repeat a possibly
+                // consumed food item after crash or disk failure.
+            }
         }
 
         private static JsonObject snapshot(Minecraft mc) {
