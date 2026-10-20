@@ -129,7 +129,7 @@ class SessionManager:
             reason = "unmanaged_game_may_be_running"
         else:
             reason = "no_known_live_instance"
-        return {"tmux_session": self.session, "tmux_attached": active,
+        return {"tmux_session": self.session, "tmux_session_exists": active,
                 "game_state": heartbeat, "matching_java_pids": pids,
                 "reason": reason,
                 "note": "Never kill existing Java. Stale/absent state does not prove exit."}
