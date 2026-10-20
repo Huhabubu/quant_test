@@ -71,13 +71,14 @@ class TmuxConsole:
 
 
 class Controller:
-    def __init__(self, console, target_host, target_port, mcdir=None, player_name="DouDou", events=None):
+    def __init__(self, console, target_host, target_port, mcdir=None, player_name="DouDou", events=None, account_probe=None):
         if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", target_host):
             raise ValueError("无效的服务器域名")
         if not 1 <= target_port <= 65535:
             raise ValueError("无效的服务器端口")
         self.console = console
         self.events = events
+        self.account_probe = account_probe
         self.target_host = target_host
         self.target_port = target_port
         if mcdir is not None and not re.fullmatch(r"/[A-Za-z0-9_./-]+", mcdir):
@@ -98,6 +99,7 @@ class Controller:
             "game_loaded": None,
             "profile_preparation_submitted": self._prepared,
             "launch_submitted": self._launch_submitted,
+            "account_verified": (self.account_probe.verify()["verified"] if self.account_probe else None),
             "server_connected": None,
             "note": "只验证控制台进程可用；尚不能证明客户端加载或连服成功",
         }
@@ -116,6 +118,8 @@ class Controller:
             if self.mcdir is None:
                 raise InvalidCommand("未指定 --mcdir，拒绝准备启动配置")
             self.console.send("config set hmc.mcdir " + self.mcdir)
+            if self.account_probe:
+                self.account_probe.arm()
             self.console.send("account -p offline select " + self.player_name)
             self._prepared = True
         return {
@@ -130,6 +134,8 @@ class Controller:
                 raise InvalidCommand("本次控制台已提交过 launch；禁止重复启动")
             if self.mcdir is not None and not self._prepared:
                 raise InvalidCommand("必须先调用 /v1/prepare 并核对控制台输出")
+            if self.account_probe is not None and not self.account_probe.verify()["verified"]:
+                raise InvalidCommand("无法证明本会话已选择 DouDou，拒绝启动")
             self.console.send('launch neoforge 26.2 --offline -lwjgl -eula -j "-Xmx5G"')
             self._launch_submitted = True
         return {"accepted": True, "verified": False}
@@ -181,7 +187,12 @@ def make_handler(controller, token):
                 return
             if not self.authorized():
                 return
-            if self.path.startswith("/v1/events"):
+            if self.path == "/v1/account":
+                if controller.account_probe is None:
+                    self.reply(501, {"error": "account_proof_not_configured"})
+                else:
+                    self.reply(200, controller.account_probe.verify())
+            elif self.path.startswith("/v1/events"):
                 parsed = urlsplit(self.path)
                 if parsed.path != "/v1/events":
                     self.reply(404, {"error": "not_found"})
