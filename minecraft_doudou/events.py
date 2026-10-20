@@ -92,7 +92,6 @@ class MinecraftChatEvents:
         signature = None
         last_position = 0
         first_attach = True
-        partial = ""
         try:
             while not self.stop_event.is_set():
                 try:
@@ -109,16 +108,16 @@ class MinecraftChatEvents:
                             stream.seek(0, os.SEEK_END)
                         first_attach = False
                         last_position = stream.tell()
-                        partial = ""
                     with self.condition:
                         self.file_available = True
                     while True:
+                        position = stream.tell()
                         line = stream.readline()
                         if not line:
                             break
                         if not line.endswith("\n"):
                             # The writer has not finished flushing this line.
-                            stream.seek(stream.tell() - len(line))
+                            stream.seek(position)
                             break
                         last_position = stream.tell()
                         self.publish_line(line)
