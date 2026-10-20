@@ -118,3 +118,12 @@ python3 -m minecraft_doudou.mod_cli --root "$ROOT" sleep 1 64 2
 6. Measure tick-time overhead before enabling periodic autonomous reasoning. These snapshots **do not themselves wake Muse**; the event-to-Agent wake path remains a distinct task.
 
 **Known separate bug, based on Muse's latest Issue:** `eat` currently selects the food slot but does not hold use long enough for consumption. Container opening and nighttime sleeping have been verified in v0.1.0; do not mark eating as fixed by this version.
+
+
+## v0.2.1: Eating test candidate
+
+The previously deployed 0.2.0 cannot finish eating. This version holds the game use-item control across several ticks instead of sending only one action. It releases the control on success, interruption or timeout. It checks the observed hunger level and food stack count before claiming success.
+
+The game command result is deferred until the attempt finishes. Query the result ID as usual. During the attempt it can return `in_progress`; on completion it reports before/after food counts, hunger levels and ticks elapsed. A build passing CI is NOT proof that a real server accepted the eating action.
+
+Muse next test: when the existing client has naturally stopped, install only the new JAR after archiving older versions. In a safe area, stop Baritone, close GUI windows, place golden carrots in the hotbar, ensure hunger is below 20, and submit one `eat` action. Check that the item stack decreases and hunger rises within several seconds. Do not automatically retry an unconfirmed action.
