@@ -1,5 +1,6 @@
 import http.client
 import json
+import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
@@ -100,6 +101,47 @@ class BridgeTests(unittest.TestCase):
             ["tmux", "send-keys", "-t", "=doudou", "-l", 'msg "hello world"'],
             ["tmux", "send-keys", "-t", "=doudou", "Enter"],
         ])
+
+    def test_tmux_mark_survives_http_bridge_restart(self):
+        with tempfile.TemporaryDirectory() as folder:
+            calls = []
+            marked = {"launch": False}
+
+            def runner(cmd, **kw):
+                calls.append(list(cmd))
+                if cmd[1] == "has-session":
+                    return Mock(returncode=0, stdout="")
+                if cmd[1] == "show-options":
+                    return Mock(returncode=0 if marked["launch"] else 1,
+                                stdout="1\n" if marked["launch"] else "")
+                if cmd[1] == "set-option":
+                    self.assertEqual(cmd[-2:], ["@doudou_launch_submitted", "1"])
+                    marked["launch"] = True
+                    return Mock(returncode=0, stdout="")
+                if cmd[1] == "send-keys":
+                    return Mock(returncode=0, stdout="")
+                if cmd[1] == "capture-pane":
+                    return Mock(returncode=0, stdout="HeadlessMC ready\n")
+                raise AssertionError(cmd)
+
+            old = TmuxConsole("doudou-managed", runner=runner, launch_lock_dir=folder)
+            first = Controller(old, "example.org", 25565, mcdir="/tmp/game")
+            first.prepare()
+            first.launch()
+            self.assertTrue(marked["launch"])
+            self.assertTrue(first.status()["launch_submitted"])
+            new = TmuxConsole("doudou-managed", runner=runner, launch_lock_dir=folder)
+            fresh = Controller(new, "example.org", 25565, mcdir="/tmp/game")
+            self.assertTrue(fresh.status()["launch_submitted"])
+            self.assertEqual(new.recent_output()["lines"][-1][1], "HeadlessMC ready")
+            with self.assertRaises(InvalidCommand):
+                fresh.prepare()
+            with self.assertRaises(InvalidCommand):
+                fresh.launch()
+            launch_commands = [c for c in calls if len(c) > 5 and c[1] == "send-keys"
+                               and any("launch neoforge" in str(part) for part in c)]
+            self.assertEqual(len(launch_commands), 1)
+            self.assertIn("-Xmx3G", str(launch_commands[0]))
 
     def test_invalid_session(self):
         for session in ("hello;rm", "../tmp", "a b"):
