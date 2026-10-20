@@ -56,6 +56,7 @@ final class NearbyEntities {
             item.addProperty("name", entity.getName().getString());
             item.addProperty("uuid", entity.getUUID().toString());
             item.addProperty("entity_id", entity.getId());
+            if (isCorpse(entity)) item.addProperty("owned_by_self", CorpseInteraction.ownedByLocalPlayer(mc, entity));
             item.addProperty("x", entity.getX());
             item.addProperty("y", entity.getY());
             item.addProperty("z", entity.getZ());
