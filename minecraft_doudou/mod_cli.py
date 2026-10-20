@@ -15,6 +15,9 @@ def main(argv=None):
     parser.add_argument("--root", required=True, help="Existing instance/config/doudou-io directory")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("state")
+    memory = sub.add_parser("landmarks")
+    memory.add_argument("--kind", choices=["bed", "container", "workstation"])
+    memory.add_argument("--limit", type=int, default=100)
     eat = sub.add_parser("eat")
     eat.add_argument("--slot", type=int)
     for name in ("open", "sleep"):
@@ -29,6 +32,8 @@ def main(argv=None):
     try:
         if args.command == "state":
             output = box.state()
+        elif args.command == "landmarks":
+            output = box.landmarks(args.kind, args.limit)
         elif args.command == "eat":
             payload = {"action": "eat"}
             if args.slot is not None:
