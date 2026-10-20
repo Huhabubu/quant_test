@@ -14,6 +14,7 @@ from http.server import ThreadingHTTPServer
 from .bridge import ConsoleUnavailable, Controller, InvalidCommand, make_handler
 from .preflight import PreflightError, build_java_argv, inspect_installation
 from .events import MinecraftChatEvents
+from .account_state import AccountSelectionProbe
 
 
 class StdioConsole:
@@ -98,6 +99,8 @@ def main():
     parser.add_argument("--mcdir", required=True, help="已安装的 Minecraft 游戏目录（不要用 --cwd 代替）")
     parser.add_argument("--pty", action="store_true", help="使用模拟交互式终端，保持 JLine 行为")
     parser.add_argument("--owner-name", default="Huhabubu", help="只监听这个玩家的聊天")
+    parser.add_argument("--account-state-file", required=True,
+                        help="HeadlessMC 已保存的 last/.accounts.json 绝对路径，核验本会话选择 DouDou")
     parser.add_argument("--diagnostic-log", help="仅 PTY：私有 launcher 合并输出日志路径")
     parser.add_argument("--server-host", required=True)
     parser.add_argument("--server-port", type=int, required=True)
@@ -124,9 +127,10 @@ def main():
         os.path.join(installation["instance"], "logs", "latest.log"),
         allowed_sender=args.owner_name,
     )
+    probe = AccountSelectionProbe(args.account_state_file)
     controller = Controller(
         console, args.server_host, args.server_port,
-        mcdir=installation["mcdir"], events=events
+        mcdir=installation["mcdir"], events=events, account_probe=probe
     )
     # Bind BEFORE launching Java so port conflicts cannot spawn a second client.
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(controller, token))
