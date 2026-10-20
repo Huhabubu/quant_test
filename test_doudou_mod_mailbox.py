@@ -36,6 +36,7 @@ class ModMailboxTests(unittest.TestCase):
             "schema": 1,
             "captured_at_ms": int(time.time() * 1000),
             "in_world": True,
+            "session_id": "e" * 32,
             "dead": False,
             "hunger": 6,
             "inventory": [
@@ -74,7 +75,11 @@ class ModMailboxTests(unittest.TestCase):
         id_ = result["id"]
         self.assertFalse(result["verified"])
         pending = self.root / "commands" / (id_ + ".json")
-        self.assertEqual(json.loads(pending.read_text()), {"action": "eat", "slot": 4})
+        queued = json.loads(pending.read_text())
+        self.assertEqual(queued["action"], "eat")
+        self.assertEqual(queued["slot"], 4)
+        self.assertEqual(queued["session_id"], "e" * 32)
+        self.assertLess(abs(queued["created_at_ms"] - int(time.time() * 1000)), 3000)
         self.assertEqual(self.box.result(id_)["status"], "queued")
         pending.rename(self.root / "commands" / (id_ + ".processing"))
         self.assertEqual(self.box.result(id_)["status"], "unknown_after_claim")
@@ -89,6 +94,11 @@ class ModMailboxTests(unittest.TestCase):
             self.write_state(**values)
             with self.assertRaises(ModUnavailable):
                 self.box.submit({"action": "eat"})
+
+    def test_missing_or_invalid_session_rejected(self):
+        self.write_state(session_id="invalid")
+        with self.assertRaises(ModUnavailable):
+            self.box.submit({"action": "eat"})
 
     def test_bounded_block_interaction_payload(self):
         result = self.box.submit({"action": "sleep", "x": 3, "y": 65, "z": -4})
