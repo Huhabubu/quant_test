@@ -34,7 +34,7 @@ All requests use the existing Bearer token over 127.0.0.1:8765.
 | POST /v1/game-action | JSON {"action":"sleep","x":1,"y":64,"z":2} |
 | GET /v1/game-action?id=32hex | Poll queued/completed/unknown_after_claim/not_found |
 
-The client polls command files under config/doudou-io/commands. It **claims a request before execution** to prevent automatic replay after crashes. Unknown-after-claim is not safe to retry blindly. The client writes results atomically under config/doudou-io/results. The in-game client is the only executor; Python cannot issue arbitrary game actions or shell commands.
+Each request is bound to the current client session_id and expires after 10 seconds; old commands from a previous game process cannot execute on a restart. The client polls command files under config/doudou-io/commands. It **claims a request before execution** to prevent automatic replay after crashes. Unknown-after-claim is not safe to retry blindly. The client writes results atomically under config/doudou-io/results. The in-game client is the only executor; Python cannot issue arbitrary game actions or shell commands.
 
 The filesystem must remain private to the Muse VM's local game/bridge user; the localhost HTTP port must not be exposed publicly.
 
