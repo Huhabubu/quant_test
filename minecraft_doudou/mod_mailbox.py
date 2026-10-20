@@ -147,6 +147,16 @@ class ModMailbox:
             return {"status": "queued", "id": id_}
         processing = self.root / "commands" / (id_ + ".processing")
         if processing.exists():
+            try:
+                current = self.state()
+                if current.get("eating_active") is True and current.get("eating_id") == id_:
+                    return {
+                        "status": "in_progress", "id": id_,
+                        "ticks_elapsed": current.get("eating_ticks_elapsed", 0),
+                        "note": "客户端仍在持续使用食物，请等待最终确认，勿重复提交",
+                    }
+            except ModUnavailable:
+                pass
             return {"status": "unknown_after_claim", "id": id_,
                     "note": "客户端已领取请求但无结果；不要自动重试使用动作"}
         return {"status": "not_found", "id": id_}
