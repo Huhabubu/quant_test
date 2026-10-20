@@ -209,7 +209,7 @@ public final class DouDouClient {
                 }
             }
             state.add("screen_items", opened);
-            state.addProperty("screen", mc.screen == null ? "" : mc.screen.getClass().getSimpleName());
+            state.addProperty("screen", mc.gui.screen() == null ? "" : mc.gui.screen().getClass().getSimpleName());
             return state;
         }
 
