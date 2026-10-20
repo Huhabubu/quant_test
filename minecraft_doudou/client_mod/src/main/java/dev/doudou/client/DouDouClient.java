@@ -239,7 +239,8 @@ public final class DouDouClient {
             }
             state.add("screen_items", opened);
             state.addProperty("screen", mc.gui.screen() == null ? "" : mc.gui.screen().getClass().getSimpleName());
-            if (cachedLevel != mc.level || nearbyScannedAtMs == 0
+            boolean worldChanged = cachedLevel != mc.level;
+            if (worldChanged || nearbyScannedAtMs == 0
                 || ticks % PERCEPTION_INTERVAL_TICKS == 0) {
                 cachedNearby = nearbyInteractables(mc);
                 cachedLevel = mc.level;
@@ -254,7 +255,7 @@ public final class DouDouClient {
             state.addProperty("dimension", LandmarkMemory.dimension(mc));
             state.add("remembered_landmarks", memory == null
                 ? new JsonArray() : memory.recalled(scope, nearbyScannedAtMs, 256));
-            if (entitiesScannedAtMs == 0 || ticks % 20 == 0 || cachedLevel != mc.level) {
+            if (worldChanged || entitiesScannedAtMs == 0 || ticks % 20 == 0) {
                 cachedEntities = NearbyEntities.scan(mc);
                 entitiesScannedAtMs = System.currentTimeMillis();
             }
