@@ -42,7 +42,7 @@ final class LandmarkMemory {
 
     private record Entry(String scope, String dimension, int x, int y, int z,
                          String blockId, String kind, long lastSeen) {
-        String key() { return key(scope, x, y, z); }
+        String key() { return LandmarkMemory.key(scope, x, y, z); }
     }
 
     LandmarkMemory(Path root) {
@@ -55,7 +55,7 @@ final class LandmarkMemory {
     }
 
     static String dimension(Minecraft mc) {
-        return mc.level == null ? null : mc.level.dimension().location().toString();
+        return mc.level == null ? null : mc.level.dimension().toString();
     }
 
     static String scope(Minecraft mc) {
