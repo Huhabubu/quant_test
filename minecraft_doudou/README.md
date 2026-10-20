@@ -131,3 +131,19 @@ curl -sS -G -H "Authorization: Bearer $DOUDOU_BRIDGE_TOKEN"   --data-urlencode "
 - Launcher 退出码在 /v1/output 的 exit_code 和 /v1/status 的 launcher_exit_code；标准错误与标准输出在 PTY 上合并；
 - 当前进程输出会写入仅所有者可读的 ~/.local/state/doudou-bridge/launcher.pty.log，大于 2MB 后轮转为 launcher.pty.previous.log。日志可能包含玩家聊天，分享前脱敏；
 - 启动时 --account-state-file 必须指向 HeadlessMC **实际使用**的 last/.accounts.json。上例 /root/... 是 Muse 曾报告的路径，不是硬编码事实；若运行用户或存储路径不同，应先由 Muse 核查。prepare 后 /v1/account 返回 verified:true 才允许 launch，避免仍用 Offline 账号。
+
+
+## 2026-10-20 新增：解决吃东西 / 箱子 / 睡觉 / 背包数量的实验客户端 Mod
+
+Muse 实测：HeadlessMC 的 mouse.right / mouse.left 虽可发送按键，但**不能使无头客户端可靠执行游戏内交互**。这不是增加按键持续时间可以解决的问题。
+
+已新增源码和隔离编译流程：
+- minecraft_doudou/client_mod/：NeoForge 26.2.0.88、Java 25 的仅客户端 Mod；在游戏线程发布实际游戏状态，并处理有限的交互动作（吃现有快捷栏食物、使用附近可见的原版箱子/桶/潜影盒、使用附近可见的床）。
+- minecraft_doudou/mod_mailbox.py：本地文件队列，Mod 处理命令前先领取，避免崩溃后动作被无意重复执行；超过 3 秒未更新的状态会被拒绝。
+- GET /v1/game-state：只有 Mod 已安装、运行并持续出具有效快照时才返回（背包 count/耐久/生命/饱食度/坐标/是否睡觉/容器格子内容）。
+- POST /v1/game-action：仅接受 eat 或附 x/y/z 的 open_container/sleep，固定白名单、距离和视线检查，不支持任意指令。
+- GET /v1/game-action?id=<32个小写十六进制字符>：区分 queued、completed、unknown_after_claim、not_found。accepted=True 不是服务器确认。
+
+完整安装说明、测试步骤和局限见 minecraft_doudou/client_mod/README.md；GitHub Actions 工作流 .github/workflows/doudou-client-mod.yml 用 Java 25、Gradle 9.2.1 编译并提供候选 JAR。
+
+**部署门槛**：新 Mod 必须首先通过独立 Java 编译 CI，然后由 Muse 在现有 Minecraft 自然下线的下一次冷启动中人工安装并实测；现在不修改服务端、不重启在线客户端、不宣称已经吃到食物、打开箱子或睡觉成功。
