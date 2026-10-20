@@ -12,6 +12,7 @@ import threading
 from http.server import ThreadingHTTPServer
 
 from .bridge import ConsoleUnavailable, Controller, InvalidCommand, make_handler
+from .preflight import PreflightError, build_java_argv, inspect_installation
 
 
 class StdioConsole:
@@ -93,6 +94,7 @@ def main():
     parser = argparse.ArgumentParser(description="HeadlessMC stdin/stdout local bridge")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--cwd", help="HeadlessMC 运行目录")
+    parser.add_argument("--mcdir", required=True, help="已安装的 Minecraft 游戏目录（不要用 --cwd 代替）")
     parser.add_argument("--pty", action="store_true", help="使用模拟交互式终端，保持 JLine 行为")
     parser.add_argument("--server-host", required=True)
     parser.add_argument("--server-port", type=int, required=True)
@@ -102,6 +104,11 @@ def main():
     command = args.command[1:] if args.command and args.command[0] == "--" else args.command
     if not command:
         parser.error("请在 -- 后提供完整的 HeadlessMC 启动命令")
+    try:
+        installation = inspect_installation(args.mcdir)
+        command = build_java_argv(command, installation["mcdir"])
+    except (OSError, PreflightError, ValueError) as exc:
+        parser.error("预检失败，不会启动游戏：" + str(exc))
     token = os.environ.get("DOUDOU_BRIDGE_TOKEN", "")
     if len(token) < 32 or any(ord(char) <= 32 for char in token):
         parser.error("请设置至少 32 个无空白字符的 DOUDOU_BRIDGE_TOKEN")
@@ -110,10 +117,12 @@ def main():
         console = PtyConsole(command, cwd=args.cwd)
     else:
         console = StdioConsole(command, cwd=args.cwd)
-    controller = Controller(console, args.server_host, args.server_port)
+    controller = Controller(console, args.server_host, args.server_port, mcdir=installation["mcdir"])
     # Bind BEFORE launching Java so port conflicts cannot spawn a second client.
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(controller, token))
     try:
+        print("Preflight OK: %s; active mod jars=%d; JourneyMap disabled" % (
+            installation["instance"], installation["mods_count"]), flush=True)
         console.start()
         print("Local bridge at http://127.0.0.1:%d; HMC PID=%d" % (args.port, console.process.pid), flush=True)
         server.serve_forever()
