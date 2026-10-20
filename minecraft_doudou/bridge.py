@@ -1,4 +1,4 @@
-"""Local, authenticated HTTP -> tmux -> HeadlessMC console bridge.
+"""Local authenticated HTTP -> HeadlessMC console bridge (tmux or stdio).
 
 Commands are queued to a real Minecraft client running hmc-specifics.
 tmux acceptance does not prove in-game execution.
@@ -84,7 +84,7 @@ class Controller:
             "console_available": self.console.available(),
             "game_loaded": None,
             "server_connected": None,
-            "note": "只验证 tmux 会话存在；尚不能证明客户端加载或连服成功",
+            "note": "只验证控制台进程可用；尚不能证明客户端加载或连服成功",
         }
 
     def connect(self):
@@ -138,7 +138,12 @@ def make_handler(controller, token):
                 try:
                     self.reply(200, controller.status())
                 except (OSError, subprocess.TimeoutExpired):
-                    self.reply(503, {"error": "tmux_unavailable"})
+                    self.reply(503, {"error": "console_unavailable"})
+            elif self.path == "/v1/output":
+                if hasattr(controller.console, "recent_output"):
+                    self.reply(200, controller.console.recent_output())
+                else:
+                    self.reply(501, {"error": "output_not_supported"})
             else:
                 self.reply(404, {"error": "not_found"})
 
