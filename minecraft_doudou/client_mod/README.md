@@ -117,7 +117,7 @@ python3 -m minecraft_doudou.mod_cli --root "$ROOT" sleep 1 64 2
 5. Near another consenting player, animal, hostile mob or tossed low-value item, confirm correct category, distance and item count. Confirm old entities vanish from the live list when they move away. Do not claim visibility through walls.
 6. Measure tick-time overhead before enabling periodic autonomous reasoning. These snapshots **do not themselves wake Muse**; the event-to-Agent wake path remains a distinct task.
 
-**Known separate bug, based on Muse's latest Issue:** `eat` currently selects the food slot but does not hold use long enough for consumption. Container opening and nighttime sleeping have been verified in v0.1.0; do not mark eating as fixed by this version.
+**Earlier bug:** On 0.1.x/0.2.0, `eat` selected food but did not hold use long enough; 0.2.1 attempts to fix this. Eating remains pending live verification. Container opening and nighttime sleeping have been verified in v0.1.0.
 
 
 ## v0.2.1: Eating test candidate
