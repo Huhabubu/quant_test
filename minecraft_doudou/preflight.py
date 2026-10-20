@@ -12,7 +12,10 @@ INSTANCE = "neoforge-26.2"
 
 
 def inspect_installation(mcdir):
-    root = Path(mcdir).expanduser().resolve(strict=True)
+    try:
+        root = Path(mcdir).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise PreflightError("游戏目录不存在或无法访问") from exc
     instance = root / INSTANCE
     mods = instance / "mods"
     config = instance / "config" / "fml.toml"
