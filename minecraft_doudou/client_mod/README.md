@@ -49,3 +49,29 @@ The filesystem must remain private to the Muse VM's local game/bridge user; the 
 7. Confirm missing food, blocked sight, wrong target, unloaded chunk, dead state and out-of-range requests are rejected without interaction.
 
 At present, the mod does **not** autonomously choose which chest/bed to visit, move items from non-hotbar inventory to a usable slot, control camera pitch/yaw, or stop/resume Baritone. These are distinct future capabilities.
+
+
+## 旧桥尚未修好时如何独立验证 Mod
+
+Muse 之前的 PTY 桥曾在 startup 退出；它不应该阻止 Mod 的功能实机验证。只在下一次自然冷启动安装 Mod 后，可继续按 Muse **已经验证可入服的手动 HeadlessMC 流程**启动客户端，然后在同一 VM 的另一 shell 中使用 Python 本地 CLI。操作系统用户必须有游戏目录读写权限。
+
+~~~bash
+# 以下 GAME 路径仅是 Muse 曾报告的实例路径，需先核实现场值
+GAME=/home/hatch/workspace/headlessmc/gamedir/neoforge-26.2
+ROOT="$GAME/config/doudou-io"
+python3 -m minecraft_doudou.mod_cli --root "$ROOT" state
+
+# 先停止 Baritone，确认快捷栏第 5 格确实为可吃的食物，再提交一次：
+python3 -m minecraft_doudou.mod_cli --root "$ROOT" eat --slot 4
+
+# 从上一命令返回的 id 查询是否被客户端执行：
+python3 -m minecraft_doudou.mod_cli --root "$ROOT" result <32hex-id>
+
+# 从 state 里的 nearby_interactables 获取 usable_now=true 的真实方块坐标：
+python3 -m minecraft_doudou.mod_cli --root "$ROOT" open 1 64 2
+python3 -m minecraft_doudou.mod_cli --root "$ROOT" sleep 1 64 2
+~~~
+
+最后两个坐标仅为示意，**必须使用游戏内读到的实际 x/y/z**。如果 Action 回报 accepted=true,verified=false，仍要等待服务器状态变化再判断成功。
+
+这样可以分别验证“Mod 本身能否执行”与“HTTP 桥能否启动和控制”，避免两类故障同时干扰诊断。所有动作受 session_id 和 10 秒有效期保护，跨客户端重启的旧命令不会被执行。
