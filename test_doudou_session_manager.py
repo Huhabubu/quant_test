@@ -99,7 +99,7 @@ class SessionManagerTests(unittest.TestCase):
         self.heartbeat(seconds_ago=40)
         self.assertFalse(snapshot_status(self.instance)["fresh"])
         self.assertEqual(self.mgr.status()["reason"], "no_known_live_instance")
-        self.assertIn("NOT", self.mgr.status()["note"] if "NOT" in self.mgr.status()["note"] else "NOT")
+        self.assertIn("does not prove", self.mgr.status()["note"])
 
     def test_no_start_when_unsafe_installation(self):
         (self.instance / "config" / "fml.toml").write_text("earlyWindowControl=true")
