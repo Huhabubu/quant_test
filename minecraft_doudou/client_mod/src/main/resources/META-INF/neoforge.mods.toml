@@ -3,7 +3,7 @@ loaderVersion="[1,)"
 license="MIT"
 [[mods]]
 modId="doudou_client"
-version="0.2.2"
+version="0.2.4"
 displayName="DouDou Client Control"
 description='''Read-only game state and bounded in-client item/block interaction for DouDou.'''
 displayTest="IGNORE_ALL_VERSION"
