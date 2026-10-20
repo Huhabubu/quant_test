@@ -1,0 +1,21 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="MIT"
+[[mods]]
+modId="doudou_client"
+version="0.2.4"
+displayName="DouDou Client Control"
+description='''Read-only game state and bounded in-client item/block interaction for DouDou.'''
+displayTest="IGNORE_ALL_VERSION"
+[[dependencies.doudou_client]]
+modId="neoforge"
+type="required"
+versionRange="[26.2.0.88,)"
+ordering="NONE"
+side="CLIENT"
+[[dependencies.doudou_client]]
+modId="minecraft"
+type="required"
+versionRange="[26.2]"
+ordering="NONE"
+side="CLIENT"
