@@ -85,3 +85,36 @@ python3 -m minecraft_doudou.mod_cli --root "$ROOT" sleep 1 64 2
 - State JSON includes nearby_scan_radius, nearby_scan_vertical_range and nearby_scan_updated_at_ms. Cached usable_now can be 2 seconds old; game actions still check the **4.5 block interaction reach** and line-of-sight before executing.
 - Only ALREADY LOADED chunks are inspected; this does not force distant chunk loads.
 - The installed 0.1.0 JAR does not update by changing the Python files. The expanded-perception build is version 0.1.1; remove the old 0.1.0 JAR before installing 0.1.1 to avoid a duplicate mod ID. Obtain a new build candidate and install during the NEXT safe cold boot; do not hot-swap a live mod.
+
+## v0.2.0 — Durable landmarks and moving entity perception
+
+**Important:** the installed v0.1.0/v0.1.1 clients do NOT provide these capabilities. Compile or download the new v0.2.0 candidate and install it only after the live client has naturally stopped. Remove/archive every older doudou_client-*.jar before adding the new jar; never run multiple copies of the same mod ID.
+
+### Remembered static landmarks (even when DouDou walks away)
+
+- Every 40 client ticks (~2 s at 20 TPS), the existing 12-block loaded-chunk scan detects supported **vanilla beds, chests, barrels, shulker boxes**, and workstation blocks including **crafting table, furnace, blast furnace, smoker, smithing table, anvil, stonecutter, grindstone, brewing stand, enchanting table, loom, cartography table and fletching table**.
+- These observations are held in memory and atomically persisted at `gamedir/neoforge-26.2/config/doudou-io/landmarks.json`. Disk writes occur for added/removed landmarks, or at most once every ~30 s for timestamp-only refreshes. Maximum 1,024 locations across all recognized worlds.
+- Memory is scoped by a SHA-256 hash of the **connected server endpoint and dimension**, preventing overworld/Nether or distinct known servers from mixing. If the client cannot determine a remote server endpoint, `landmark_memory_available=false` and it does not claim durable cross-world memory.
+- A new snapshot field `remembered_landmarks` reports up to 256 recently observed places, including `x/y/z`, block type, kind, dimension, and `last_seen_at_ms`. `seen_in_latest_scan=true` means the block was present during the most recent scan; **neither this nor an old memory entry guarantees the block is present now**.
+- On revisiting a loaded, scanned area, if a recorded block has been broken/replaced, the record is removed. Locations in unloaded or distant chunks remain as **unverified historical observations** until revisited.
+- A separate optional lookup API `GET /v1/landmarks?kind=bed&limit=100` returns historical bed/container/workstation coordinates without needing them to be in the current 12-block scan, scoped to the present world. The independent CLI is `python3 -m minecraft_doudou.mod_cli --root "$ROOT" landmarks --kind bed`.
+- **Navigation safety:** Do not send a bed/chest/workstation's exact block coordinates as a Baritone `#goto` destination. Muse previously broke a bed by doing this. Select a proven safe adjacent standing position, and use a no-block-break pathfinding policy before approaching valuable blocks. This mod does NOT yet produce or guarantee a safe stand point.
+- Persistence lasts only as long as the underlying **gamedir** survives. If Muse resets the entire VM including the Minecraft files, historical landmarks will be lost unless the game directory is backed up.
+
+### Live moving entities — NOT permanent landmarks
+
+- Within **24 blocks** of DouDou, the client reads its **currently loaded entities** once every 20 client ticks (~1 s): other players (`player`), monster-category mobs (`hostile`), animals (`animal`), other loaded mobs such as villagers (`other_mob`), and ground item entities (`dropped_item`).
+- `nearby_entities[]`: `category`, entity `type`, name, current `x/y/z`, and `distance`; for dropped item entities includes **item_id and count**.
+- Also reports `nearby_entity_radius=24` and `nearby_entities_updated_at_ms`. Results are bounded to the **64 nearest** entities per scan. These are client-known positions, **not necessarily in line of sight**; no entities are pulled from unloaded chunks.
+- Moving entity positions are deliberately **not saved in landmarks.json**. Presence/position can change between snapshots; Muse should not confidently say another player is still there based only on an old reading.
+
+### Verification after installing v0.2.0
+
+1. Check latest state snapshot: `landmark_memory_available`, `dimension`, `nearby_entity_radius=24`, `nearby_entities`, and `remembered_landmarks`.
+2. Walk past a chest, a bed and crafting table; verify each is remembered with coordinates and block type. Walk more than 12 blocks away and query `/v1/landmarks?kind=bed` or `mod_cli landmarks --kind bed`: the old bed should remain listed with a past `last_seen_at_ms`.
+3. After a natural client restart, query the same world again; the remembered landmark should return. If not, verify the game directory and scope identity were stable and landmarks.json was preserved.
+4. Safely break and replace a **test-only** workstation. After a subsequent scan, confirm the old record is invalidated/updated. Do not destroy anyone else's structure for testing.
+5. Near another consenting player, animal, hostile mob or tossed low-value item, confirm correct category, distance and item count. Confirm old entities vanish from the live list when they move away. Do not claim visibility through walls.
+6. Measure tick-time overhead before enabling periodic autonomous reasoning. These snapshots **do not themselves wake Muse**; the event-to-Agent wake path remains a distinct task.
+
+**Known separate bug, based on Muse's latest Issue:** `eat` currently selects the food slot but does not hold use long enough for consumption. Container opening and nighttime sleeping have been verified in v0.1.0; do not mark eating as fixed by this version.
