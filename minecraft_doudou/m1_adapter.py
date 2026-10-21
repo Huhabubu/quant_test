@@ -68,7 +68,7 @@ CAPABILITIES = {
     "joinworld": ("screen", "disabled", "world_selection"),
     "pause": ("screen", "disabled", "world_exit_risk"),
 }
-TARGET = re.compile(r"^[a-zA-Z0-9_:\\-]{1,64}$")
+TARGET = re.compile(r"^[A-Za-z0-9_:-]{1,64}$")
 
 
 class M1ActionDenied(ValueError):
