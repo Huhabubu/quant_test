@@ -384,6 +384,14 @@ public final class DouDouClient {
                 return state;
             }
 
+            // ClientLevel exposes the daylight clock synchronized by the server.
+            // This is observed state only; never assume a bed is usable from
+            // the time alone (weather, dimension and server rules matter).
+            long worldTime = mc.level.getDayTime();
+            state.addProperty("world_time", worldTime);
+            state.addProperty("day_time", WorldClock.dayTime(worldTime));
+            state.addProperty("clock_time", WorldClock.clockTime(worldTime));
+
             state.addProperty("health", mc.player.getHealth());
             state.addProperty("max_health", mc.player.getMaxHealth());
             state.addProperty("hunger", mc.player.getFoodData().getFoodLevel());
