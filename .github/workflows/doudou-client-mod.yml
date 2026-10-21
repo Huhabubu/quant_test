@@ -8,6 +8,13 @@ on:
       - 'minecraft_doudou/client_mod/gradle.properties'
       - 'minecraft_doudou/client_mod/settings.gradle'
       - '.github/workflows/doudou-client-mod.yml'
+  pull_request:
+    paths:
+      - 'minecraft_doudou/client_mod/src/**'
+      - 'minecraft_doudou/client_mod/build.gradle'
+      - 'minecraft_doudou/client_mod/gradle.properties'
+      - 'minecraft_doudou/client_mod/settings.gradle'
+      - '.github/workflows/doudou-client-mod.yml'
   workflow_dispatch:
 jobs:
   compile:
