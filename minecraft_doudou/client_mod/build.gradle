@@ -24,3 +24,9 @@ tasks.register('verifyWorldClock', JavaExec) {
 tasks.named('check') {
     dependsOn tasks.named('verifyWorldClock')
 }
+
+// WorldClockTest is a standalone Java main executed by verifyWorldClock,
+// not a JUnit test. The default Gradle test task has no discoverable tests.
+tasks.named('test', Test) {
+    failOnNoDiscoveredTests = false
+}
