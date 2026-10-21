@@ -19,7 +19,7 @@ This new build candidate includes the existing v0.2.4 sleep diagnostics and adds
 
 | Field | Meaning | Example |
 | --- | --- | --- |
-| `world_time` | `ClientLevel.getDayTime()`: the server-synchronized accumulated daylight-cycle ticks; may jump when the time is changed or a night is skipped | `63000` |
+| `world_time` | `Level.getOverworldClockTime()`: the server-synchronized accumulated daylight-cycle ticks; may jump when the time is changed or a night is skipped | `63000` |
 | `day_time` | `world_time mod 24000`, ticks in the current Minecraft day (0–23999) | `15000` |
 | `clock_time` | Human-readable Minecraft clock, 24h `HH:MM` (tick 0 = 06:00; tick 12000 = 18:00; tick 18000 = 00:00) | `21:00` |
 
