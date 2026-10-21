@@ -14,3 +14,19 @@ neoForge {
     }
 }
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+
+/** Verify pure daylight-time conversion without launching Minecraft. */
+tasks.register('verifyWorldClock', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.doudou.client.WorldClockTest'
+}
+tasks.named('check') {
+    dependsOn tasks.named('verifyWorldClock')
+}
+
+// WorldClockTest is a standalone Java main executed by verifyWorldClock,
+// not a JUnit test. The default Gradle test task has no discoverable tests.
+tasks.named('test', Test) {
+    failOnNoDiscoveredTests = false
+}

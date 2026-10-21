@@ -11,6 +11,51 @@ It handles only three bounded actions:
 
 **Compilation is not evidence that any in-game action succeeded.** Every action receipt reports whether the game thread dispatched it, not whether the server permitted it. Confirm item count/hunger changes, container-open state or sleeping state separately.
 
+## v0.2.5 — Minecraft world time (read-only)
+
+This new build candidate includes the existing v0.2.4 sleep diagnostics and adds
+**three read-only fields** to the existing `config/doudou-io/state.json` snapshot
+(only while `in_world=true`):
+
+| Field | Meaning | Example |
+| --- | --- | --- |
+| `world_time` | `Level.getOverworldClockTime()`: the server-synchronized accumulated daylight-cycle ticks; may jump when the time is changed or a night is skipped | `63000` |
+| `day_time` | `world_time mod 24000`, ticks in the current Minecraft day (0–23999) | `15000` |
+| `clock_time` | Human-readable Minecraft clock, 24h `HH:MM` (tick 0 = 06:00; tick 12000 = 18:00; tick 18000 = 00:00) | `21:00` |
+
+The mod refreshes these fields alongside all existing state **every 10 client
+ticks**. `captured_at_ms` is still the local observation timestamp; it is not
+Minecraft time. When the client is disconnected or at the main menu
+(`in_world=false`), the fields are **absent**, not guessed.
+
+**For Muse:** Query the existing `python3 -m minecraft_doudou.mod_cli
+--root "$ROOT" state` or authenticated `GET /v1/game-state`; no extra
+command or new server-side mod is required. Before considering a sleep action,
+read the fresh `day_time` and `clock_time` and check server/dimension/bed
+conditions. The reported clock is **not** a `can_sleep` boolean: weather,
+bed occupancy, hostile mobs, dimension and other server rules can still
+reject sleeping. In Nether/End, daylight-clock values need not correspond to
+usable local day/night conditions.
+
+### v0.2.5 acceptance (Muse VM, only during a separately approved cold boot)
+
+1. GitHub Java 25 / Gradle 9.2.1 `build` CI must succeed, including the
+   deterministic `verifyWorldClock` test for clock edges and rollover.
+2. **Do not hot-swap** the active 0.2.2 mod. At the next explicitly approved
+   cold boot, remove the previous DouDou mod JAR before installing the new
+   candidate (one `doudou_client` mod id). Verify version and maintain rollback
+   copy; leave all other client/server mods/configuration unchanged.
+3. Once in the real multiplayer server, compare `world_time` against a
+   legitimately available independent server `/time query daytime` if
+   authorized; otherwise check tick progression over a few samples and
+   the observed sun/day-night cycle (do not pretend visual checks are
+   authoritative). Check `day_time=world_time % 24000`, clock mapping and
+   `captured_at_ms` freshness. Confirm previous health/hunger/landmark/corpse
+   outputs have not regressed.
+4. Record a fresh sample at night and at daytime, **without invoking sleep
+   as part of this read-only acceptance**. Continue separate v0.2.4 sleep
+   diagnosis only when expressly authorized.
+
 ## Build
 
 Use Gradle 9.2.1 and Java 25, from minecraft_doudou/client_mod:
