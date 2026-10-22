@@ -161,15 +161,18 @@ class ReplyQueue:
         try:
             result = deliver(row[1])
             accepted = isinstance(result, dict) and result.get("accepted") is True
+            mocked = accepted and result.get("mock") is True
         except Exception:
             accepted = False
-        state = "accepted_unverified" if accepted else "uncertain"
+            mocked = False
+        state = ("mocked" if mocked else "accepted_unverified") if accepted else "uncertain"
         with self.conn:
             self.conn.execute(
                 "UPDATE chat_replies SET state=?,finished_at=?,result_note=? "
                 "WHERE event_id=? AND state='sending'",
                 (state, time.time(),
-                 "bridge_console_submission_only" if accepted else "operator_review_required",
+                 ("simulation_only" if mocked else "bridge_console_submission_only")
+                 if accepted else "operator_review_required",
                  row[0]),
             )
         return {"event_id": row[0], "state": state, "verified": False}
@@ -200,7 +203,7 @@ def run_sender(db, *, bridge_url=None, token_file=None, mock_log=None,
                 stream.write(json.dumps(
                     {"at": time.time(), "text": text, "mock": True},
                     ensure_ascii=False) + "\n")
-            return {"accepted": True, "verified": False}
+            return {"accepted": True, "verified": False, "mock": True}
     queue = ReplyQueue(db)
     try:
         while True:
@@ -237,7 +240,7 @@ def main(argv=None):
         result = run_sender(args.db, bridge_url=args.bridge_url,
                             token_file=args.token_file, mock_log=args.mock_log,
                             once=args.once)
-        return 0 if result is None or result["state"] == "accepted_unverified" else 1
+        return 0 if result is None or result["state"] in ("mocked", "accepted_unverified") else 1
     queue = ReplyQueue(args.db)
     try:
         if args.command == "prepare":
