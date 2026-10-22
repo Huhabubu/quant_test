@@ -105,7 +105,7 @@ class ReplyQueue:
                 self.conn.commit()
                 return outcome
             row = self.conn.execute(
-                "SELECT seq,kind,received_at,handled_at FROM events WHERE id=?",
+                "SELECT seq,kind,received_at,handled_at,payload FROM events WHERE id=?",
                 (event_id,),
             ).fetchone()
             if row is None or row[1] != "chat" or row[3] is not None:
@@ -114,6 +114,14 @@ class ReplyQueue:
                 raise ReplyError("through_seq_before_reply")
             if when - row[2] > MAX_AGE_SECONDS:
                 raise ReplyError("chat_is_stale_do_not_reply")
+            source_event = json.loads(row[4])
+            if source_event.get("replayed_after_restart") is True:
+                raise ReplyError("recovered_chat_context_only")
+            source_time = source_event.get("received_at")
+            if (type(source_time) in (int, float)
+                    and source_time > 0
+                    and when - source_time > MAX_AGE_SECONDS):
+                raise ReplyError("source_chat_is_stale_do_not_reply")
             # Fail closed when through_seq includes a pending chat later than
             # the event being answered, to avoid accidentally ACKing a new turn.
             newer = self.conn.execute(
