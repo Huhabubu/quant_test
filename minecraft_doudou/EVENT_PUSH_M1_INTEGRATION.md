@@ -304,3 +304,67 @@ bridge `202` with `verified:false` is insufficient.
 
 No production deployment, no mod version bump, no extra public port, and
 no M1 write-action permission change in this PR.
+
+
+## P0-D M1 say transport candidate (2026-10-22)
+
+Muse established that the *currently running* HeadlessMC is attached to the
+main Agent's private exec stdin, **not tmux**. Do not try to reattach via
+bridge.py or start a second game JVM. M1 v0.17.5 already runs locally at
+127.0.0.1:26000 and Muse previously verified M1's say verb in the multiplayer
+test server. Prefer reusing this mature existing mod channel.
+
+- New m1_chat.py uses the existing m1_probe.M1Reader framing and mandatory
+  M1 greeting -> RAW ON -> single say <text> command -> <<END reply.
+  No arbitrary command parameter, no movement/attack/craft/console access;
+  host/port are hardcoded 127.0.0.1:26000 with no remote selection.
+- Explicit dispatcher selection ONLY: chat_replies send --m1-say (mutually
+  exclusive with --bridge-url / --token-file or --mock-log).
+  Message length 1–200 characters. No ASCII/Unicode format or line controls,
+  line separators, initial slash commands, or Baritone-prefixed # commands.
+  The model-generated text still must be reviewed/selected by the chat agent.
+- A positive M1 OK receipt results in accepted_unverified and note
+  m1_tcp_accepted_unverified, NEVER verified game delivery. ERR/FAIL, ambiguous
+  reply, timeout, closed TCP or unknown greeting become uncertain.
+  A reply marked sending/uncertain is NEVER automatically retransmitted, since
+  M1 does not provide an idempotency key or definitive server ACK.
+- The underlying M1 TCP port is a pre-existing unauthenticated local channel.
+  These Python allowlists are an application-level guard, NOT kernel or OS
+  isolation against a same-user process choosing to access M1 directly.
+  Keep M1 bound only to loopback, do not expose ports or add credentials to Git.
+- The dedicated sender is one process; do not run a competing direct M1 say
+  writer or the main Agent's independent chat auto-reply for the same event.
+  EventInbox/chat_replies remains the source of truth for idempotency.
+
+### Isolated tests before game write
+
+\`\`\`bash
+python3 -m unittest -v test_doudou_m1_chat test_doudou_chat_replies
+python3 -m minecraft_doudou.chat_replies send \
+  --db '<ISOLATED>/inbox.sqlite' --mock-log '<ISOLATED>/simulated.jsonl' --once
+\`\`\`
+
+The first command uses fake M1 sockets and mock bridge; no live game access.
+For the P0-D **B-level test on the already authorized multiplayer TEST server**
+only, after verifying actual M1 socket availability, the correct loaded client
+and an approved single harmless chat, select the live transport:
+
+\`\`\`bash
+python3 -m minecraft_doudou.chat_replies send \
+  --db '<TEST-INBOX>/inbox.sqlite' --m1-say
+\`\`\`
+
+This changes only the transport. Keep a **single** reply dispatcher; preserve
+the old P0-B receiver and three Relay processes until isolated acceptance
+completes. The live test MUST involve a true spawned model child, a busy main
+Agent, a fresh chat event, original prepare stdout in the report, and the
+game's *actual chat log* proving message visibility before the main job ends.
+Record T0 log capture, T1 inbox accepted, T2 child model starts, T3 prepare
+persisted, T4 Minecraft log from DouDou, T5 main task done. A positive M1
+receipt alone cannot satisfy T4.
+
+If M1 returns anything other than a recognizable OK (or if socket access
+blocks because of exclusive session ownership), stop and report the complete
+**redacted** reply/status; do not guess a protocol, retry uncertain sends,
+or fall back to the private HeadlessMC stdin. No production switch, mod
+upgrade, JVM restart, or public port exposure in this change.
