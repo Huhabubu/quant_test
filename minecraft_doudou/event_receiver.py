@@ -16,7 +16,7 @@ import time
 ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 MAX_BODY = 65536
 MAX_PENDING = 10000
-WAKE_TYPES = ("chat", "death")
+WAKE_TYPES = ("chat", "death", "low_hunger", "event_gap")
 
 
 class EventInbox:
