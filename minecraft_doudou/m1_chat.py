@@ -105,10 +105,10 @@ def send_m1_chat(text, *, connect=socket.create_connection):
             lambda frame, kind: kind not in ("async", "error") and
             ("M1" in frame or "Machine One" in frame)
         )
-        sock.sendall(b"RAW ON\n")
-        ignored += _await_frame(
-            reader, sock, "raw_mode", lambda frame, kind: kind == "ok"
-        )
+        # M1 v0.17.5 accepts direct commands after the framed greeting.
+        # Muse verified no-RAW "where" against live state.json on 2026-10-22.
+        # RAW ON instead emits a prose acknowledgement with different framing
+        # and caused a 15s timeout. Do not issue it in this chat transport.
         sock.sendall((command + "\n").encode("utf-8"))
         ignored += _await_frame(
             reader, sock, "m1_say", lambda frame, kind: kind == "ok"
