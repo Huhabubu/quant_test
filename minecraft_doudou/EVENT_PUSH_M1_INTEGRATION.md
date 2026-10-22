@@ -135,3 +135,74 @@ HTTP event push replace the current single-message wake mechanism.
 
 **Never log credentials, host addresses, full inventories or player positions
 in public issues.** No production rollout until these gates pass.
+
+
+## P0-B candidate: durable inbox and immediate wake (2026-10-22)
+
+This **draft branch only** supersedes the one-shot receiver and initial-EOF
+limitation described above. The currently live Muse v2 receiver is untouched.
+No Java mod change or version increment. All components reuse the existing
+project parser, Python standard-library HTTPServer and SQLite.
+
+1. Keep the inbox receiver running independently of the one-shot wake process.
+   It persists localhost HTTP POST events before returning 200. Invalid JSON,
+   missing IDs, 401, 409, or oversized (>64 KiB) messages do not terminate it.
+   Create a private 0600 token file, at least 32 random characters, out of Git.
+   Set DOUDOU_EVENT_TOKEN to the same secret for the three existing relays.
+
+   ```bash
+   python3 -m minecraft_doudou.event_receiver serve --db '<PRIVATE_DIR>/inbox.sqlite' --port 18765 --token-file '<PRIVATE_DIR>/token'
+   ```
+
+2. Keep the existing three distinct --sender relays with their separate outbox
+   paths and shared receiver URL at http://127.0.0.1:18765/events. The new
+   DurableChatTail persists complete log lines and their file offset in the
+   **same SQLite transaction**, recovering from relay restarts. Initial
+   enrollment begins at EOF to avoid falsely re-delivering old history.
+   Changed/truncated files emit event_gap; unrecoverable rotated history is
+   reported as such.
+
+3. Muse should arm this **one-shot notifier** as a background task and use the
+   already verified process-exit handoff. It exits on pending chat or death
+   immediately, with no 3-second quiet window. Mere player_nearby or inventory
+   changes accumulate silently. Muse may still take time to start its next
+   turn, and there is no verified supported webhook to interrupt a busy agent.
+
+   ```bash
+   python3 -m minecraft_doudou.event_receiver arm --db '<PRIVATE_DIR>/inbox.sqlite'
+   ```
+
+4. On wake, read all unhandled events in bounded pages (default 200, maximum
+   1000 per call), integrate the conversation, and explicitly acknowledge the
+   highest **fully processed** sequence. Re-arm afterwards. The message
+   received_at inside event is the relay capture time; the outer received_at
+   is the inbox acceptance time. A recovered older command should be treated
+   as context until confirmed, and the same ID must not prompt repeat replies.
+
+   ```bash
+   python3 -m minecraft_doudou.event_receiver drain --db '<PRIVATE_DIR>/inbox.sqlite' --after-seq 0 --limit 200
+   # Repeat with next_seq until all pending records have been classified.
+   python3 -m minecraft_doudou.event_receiver ack --db '<PRIVATE_DIR>/inbox.sqlite' --through-seq <FULLY_PROCESSED_SEQ>
+   python3 -m minecraft_doudou.event_receiver stats --db '<PRIVATE_DIR>/inbox.sqlite'
+   ```
+
+Only ACK processed records; a crash before ACK deliberately causes replay.
+Processed records stay in SQLite as a deduplication archive and cease to count
+as pending. A slow/absent receiver leaves events in the relay SQLite outbox.
+The receiver rejects new events with 503 when it has 10,000 pending; the relay
+does not silently discard its own full outbox either. Invalid oversized source
+events can block the relay's sending head and require explicit operator
+handling, never silent deletion.
+
+**Known limits**: VM restarts kill all processes until they are rearmed;
+Minecraft events absent from local log while the game client itself is offline
+cannot be reconstructed. Rotation while the relay is offline can make an old
+log segment inaccessible; event_gap discloses the gap. A HTTP 200 is only
+durable receipt, not proof of Muse wake/reply.
+
+Isolated verification: run
+`python3 -m unittest -v test_doudou_event_receiver test_doudou_durable_log test_doudou_event_relay test_doudou_events`.
+Then Muse should test one message through T0/T1/T2/T3, 100 rapid interleaved
+chats, a pure-state batch, repeat IDs, bad token/JSON/2MB input, receiver and
+relay restarts, log rotation, and delayed handoff. Avoid switching the live
+receiver or restarting Minecraft without authorization.
