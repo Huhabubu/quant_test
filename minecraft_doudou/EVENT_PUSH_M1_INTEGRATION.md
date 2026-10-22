@@ -371,3 +371,51 @@ blocks because of exclusive session ownership), stop and report the complete
 **redacted** reply/status; do not guess a protocol, retry uncertain sends,
 or fall back to the private HeadlessMC stdin. No production switch, mod
 upgrade, JVM restart, or public port exposure in this change.
+
+
+### 2026-10-22 P0-D B retest: fix M1 async-frame displacement
+
+Muse B-level evidence showed a chat/event notification frame delivered after RAW ON
+in place of the expected command ACK. The sender misidentified that frame as
+the receipt and stopped **before sending say**. The generated reply remained
+uncertain and was not automatically retried (correct fail-closed behavior).
+In the same test, the main Agent's busy window had already ended 7.4s
+before the model finished generating; t4<t5 was therefore impossible even if
+the transport had worked.
+
+Updated \`m1_chat.py\` now waits for a **recognized command response** while
+skipping only complete sentinel-framed notifications with first line
+\`[chat]\` or \`[event]\` (case-insensitive). This applies during greeting,
+RAW ON, and say acknowledgement. Skip budget: 32 frames per phase, max 15
+seconds elapsed per phase; errors and unrecognized frames still fail closed.
+A chat notification containing the word OK cannot masquerade as an ACK.
+Successful M1 replies record the count of skipped async frames as a diagnostic
+in the chat reply result and SQLite result_note. An uncertain send records a
+bounded failure category, never the chat text or credentials.
+
+**Muse isolated retest sequence**:
+
+1. Do not reuse the previously uncertain poetry event. Keep it archived for
+   audit and inspect its game-log evidence without resending it.
+2. Ensure the background dispatcher is a **single persistent
+   \`chat_replies send --m1-say\` process before new messages arrive**; stop
+   and verify any old mock sender is actually gone (not only its shell).
+   Start with a distinct *isolated* inbox, not the production event inbox.
+3. With that sender already running, pre-seed the M1 channel with harmless
+   chat notifications, then send **one new uniquely identified harmless
+   question** in the authorized multiplayer TEST server. Keep the actual
+   client running, do not migrate it to tmux or launch a second JVM.
+4. Spawn **one** actual natural-language child model, not a canned reply
+   script; collect raw \`prepare\` stdout and M1 sender's JSON status. Start
+   the main Agent's read-only busy interval at/after T0, or size it so it
+   cannot expire before T4. Time measurements: T0 source game log, T1 inbox,
+   T2 child model starts, T3 queue prepare, T4 **game chat actually visible**,
+   T5 main busy interval ends. Only independent T4<T5 demonstrates the goal.
+5. Confirm \`skipped_async_frames>0\` on the intentionally noisy case and
+   \`accepted_unverified\` is **still only TCP command acceptance**. If the
+   game log has no DouDou chat, report failed B. If output is \`uncertain\`,
+   do not send it again; attach the de-identified failure_category / SQLite
+   result_note and first redacted frame category for further diagnosis.
+6. Keep existing P0-B production receiver/relay untouched until this
+   isolated test and game-log confirmation pass. This patch does not grant
+   permission for official-server auto-chat or additional M1 actions.
