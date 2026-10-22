@@ -117,6 +117,22 @@ class ChatRepliesTests(unittest.TestCase):
         self.assertEqual(len([r for r in results if r is not None]), 1)
         self.assertEqual(self.q.stats(), {"accepted_unverified": 1})
 
+    def test_queued_reply_expires_before_dispatch_after_downtime(self):
+        seq = self.accept()
+        self.q.prepare("e1", seq, "我等会儿再回复你")
+        # Simulate sender being down past the original inbound chat freshness.
+        with self.q.conn:
+            self.q.conn.execute(
+                "UPDATE events SET received_at=received_at-200 WHERE id='e1'"
+            )
+        calls = []
+        result = self.q.send_once(lambda text: calls.append(text))
+        self.assertEqual(result["state"], "expired_unsent")
+        self.assertFalse(result["verified"])
+        self.assertEqual(calls, [])
+        self.assertEqual(self.q.stats(), {"expired_unsent": 1})
+        self.assertIsNone(self.q.send_once(lambda text: calls.append(text)))
+
     def test_network_unknown_is_not_retried(self):
         seq = self.accept()
         self.q.prepare("e1", seq, "只投一次")
