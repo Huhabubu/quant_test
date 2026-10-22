@@ -9,7 +9,7 @@ import socket
 import unicodedata
 
 from .bridge import InvalidCommand, quote_hmc
-from .m1_probe import HOST, PORT, M1ProbeError, M1Reader
+from .m1_probe import HOST, PORT, M1Reader
 
 _OK = re.compile(r"^OK(?:\b|[ :])", re.I)
 _ERROR = re.compile(r"^(?:ERR(?:OR)?|FAIL(?:ED)?)(?:\b|[ :])", re.I)
