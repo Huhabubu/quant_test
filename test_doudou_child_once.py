@@ -100,13 +100,13 @@ class ChildOnceTests(unittest.TestCase):
         db.close()
         self.assertIsNone(handled)
 
-    def test_other_senders_are_ignored(self):
+    def test_other_senders_trigger_full_path_not_silent_ack(self):
         _make_inbox(self.db_path, [
             (1, "s-id", "SekaiSaionji", "not for the owner path", 100.0, None),
         ])
         _make_state(self.state_path)
-        payload = child_once.run(self.db_path, self.state_path, "Huhabubu")
-        self.assertIsNone(payload["chat"])
+        with self.assertRaisesRegex(ValueError, "wrong_sender"):
+            child_once.run(self.db_path, self.state_path, "Huhabubu")
 
     def test_missing_state_file_degrades_without_crash(self):
         _make_inbox(self.db_path, [
