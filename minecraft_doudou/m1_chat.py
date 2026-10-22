@@ -102,7 +102,7 @@ def send_m1_chat(text, *, connect=socket.create_connection):
         reader = M1Reader(sock)
         ignored = _await_frame(
             reader, sock, "banner",
-            lambda frame, kind: kind != "async" and
+            lambda frame, kind: kind not in ("async", "error") and
             ("M1" in frame or "Machine One" in frame)
         )
         sock.sendall(b"RAW ON\n")
