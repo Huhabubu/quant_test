@@ -192,16 +192,18 @@ class ChatRepliesTests(unittest.TestCase):
         self.q.prepare("e1", seq, "我是豆豆，我还在忙任务。")
         with patch("minecraft_doudou.m1_chat.send_m1_chat",
                    return_value={"accepted": True, "verified": False,
-                                 "transport": "m1"}) as m1:
+                                 "transport": "m1",
+                                 "skipped_async_frames": 2}) as m1:
             result = run_sender(self.db, m1_say=True, once=True)
             self.assertEqual(result["state"], "accepted_unverified")
             self.assertFalse(result["verified"])
+            self.assertEqual(result["skipped_async_frames"], 2)
             self.assertIsNone(run_sender(self.db, m1_say=True, once=True))
             m1.assert_called_once_with("我是豆豆，我还在忙任务。")
         row = self.q.conn.execute(
             "SELECT result_note FROM chat_replies WHERE event_id='e1'"
         ).fetchone()
-        self.assertEqual(row[0], "m1_tcp_accepted_unverified")
+        self.assertEqual(row[0], "m1_tcp_accepted_unverified:async_skipped=2")
         self.assertEqual(self.q.stats(), {"accepted_unverified": 1})
 
     def test_m1_failure_is_uncertain_and_never_retried(self):
@@ -216,6 +218,22 @@ class ChatRepliesTests(unittest.TestCase):
             self.assertIsNone(run_sender(self.db, m1_say=True, once=True))
             m1.assert_called_once_with("未确认的消息")
         self.assertEqual(self.q.stats(), {"uncertain": 1})
+
+    def test_m1_error_is_recorded_with_safe_phase_name(self):
+        from unittest.mock import patch
+        from minecraft_doudou.m1_chat import M1ChatError
+        seq = self.accept()
+        self.q.prepare("e1", seq, "握手超时")
+        with patch("minecraft_doudou.m1_chat.send_m1_chat",
+                   side_effect=M1ChatError("raw_mode_not_confirmed")):
+            status = run_sender(self.db, m1_say=True, once=True)
+        self.assertEqual(status["state"], "uncertain")
+        self.assertEqual(status["failure_category"], "raw_mode_not_confirmed")
+        note = self.q.conn.execute(
+            "SELECT result_note FROM chat_replies WHERE event_id='e1'"
+        ).fetchone()[0]
+        self.assertEqual(note, "operator_review_required:raw_mode_not_confirmed")
+        self.assertIsNone(run_sender(self.db, m1_say=True, once=True))
 
     def test_m1_must_be_explicitly_selected_without_bridge_or_mock(self):
         path = Path(self.temp.name) / "mock.jsonl"
