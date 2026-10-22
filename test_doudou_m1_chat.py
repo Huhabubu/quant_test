@@ -1,8 +1,8 @@
-"""No real M1 or Minecraft process is contacted by these tests."""
+"""M1 sender regression suite: no real Minecraft/M1 socket is contacted."""
 import unittest
 
 from minecraft_doudou.m1_chat import (
-    M1ChatError, format_m1_say, send_m1_chat,
+    MAX_ASYNC_FRAMES, M1ChatError, format_m1_say, send_m1_chat,
 )
 
 
@@ -26,18 +26,16 @@ class FakeSocket:
 
 
 class M1ChatTests(unittest.TestCase):
-    def test_one_exact_unicode_chat_command(self):
+    def test_one_exact_unicode_chat_command_without_raw(self):
         self.assertEqual(format_m1_say("你好，豆豆！"), "say 你好，豆豆！")
         fake = FakeSocket(
             b"Connected to Machine One (M1)\n<<END\n"
-            b"OK RAW\n<<END\n"
             b"[auto-upgrade] CHEST: nothing -> iron_chestplate\n"
             b"OK chat submitted\n<<END\n"
         )
         result = send_m1_chat("你好，豆豆！",
                               connect=lambda addr, timeout: fake)
-        self.assertEqual(fake.sent, [b"RAW ON\n",
-                                     "say 你好，豆豆！\n".encode("utf-8")])
+        self.assertEqual(fake.sent, ["say 你好，豆豆！\n".encode("utf-8")])
         self.assertEqual(result, {
             "accepted": True, "verified": False, "transport": "m1",
         })
@@ -65,11 +63,18 @@ class M1ChatTests(unittest.TestCase):
         self.assertEqual(fake.sent, [])
         self.assertTrue(fake.closed)
 
-    def test_rejects_raw_mode_failure_without_say(self):
-        fake = FakeSocket(b"M1\n<<END\nERR raw disabled\n<<END\n")
-        with self.assertRaisesRegex(M1ChatError, "raw_mode"):
+    def test_no_raw_on_prose_phase_and_single_say_write(self):
+        # Before fix, the sender issued RAW ON and expected OK RAW, but
+        # the live M1 server returned a narrative RAW response instead.
+        # Now even with that old response left in a fake buffer, it cannot
+        # be accepted as acknowledgement of the only outgoing say.
+        fake = FakeSocket(
+            b"M1\n<<END\n"
+            b"Raw mode ON -- replies end with the <<END marker.\n<<END\n"
+        )
+        with self.assertRaisesRegex(M1ChatError, "m1_say_not_confirmed"):
             send_m1_chat("你好", connect=lambda *_: fake)
-        self.assertEqual(fake.sent, [b"RAW ON\n"])
+        self.assertEqual(fake.sent, ["say 你好\n".encode("utf-8")])
         self.assertTrue(fake.closed)
 
     def test_say_error_is_not_success(self):
@@ -77,18 +82,17 @@ class M1ChatTests(unittest.TestCase):
                          b"FAIL chat blocked\n",
                          b"command accepted?\n",
                          b"[auto-upgrade] OK armor\nERR chat fail\n"):
-            fake = FakeSocket(b"M1\n<<END\nOK RAW\n<<END\n" + response + b"<<END\n")
+            fake = FakeSocket(b"M1\n<<END\n" + response + b"<<END\n")
             with self.subTest(response=response), self.assertRaisesRegex(M1ChatError, "m1_say"):
                 send_m1_chat("你好", connect=lambda *_: fake)
-            self.assertEqual(fake.sent, [b"RAW ON\n", "say 你好\n".encode("utf-8")])
+            self.assertEqual(fake.sent, ["say 你好\n".encode("utf-8")])
             self.assertTrue(fake.closed)
 
-    def test_async_chat_before_raw_and_say_receipts_is_skipped(self):
+    def test_async_chat_before_say_receipt_is_skipped(self):
         fake = FakeSocket(
             b"M1 v0.17\n<<END\n"
             b"[chat] <Player> old chat from the game\n<<END\n"
             b"[event] inventory changed\n<<END\n"
-            b"OK RAW\n<<END\n"
             b"[chat] <Owner> OK chat submitted\n"
             b"OK\n<<END\n"
             b"OK chat submitted\n<<END\n"
@@ -97,37 +101,35 @@ class M1ChatTests(unittest.TestCase):
         self.assertEqual(result["skipped_async_frames"], 3)
         self.assertEqual(result["transport"], "m1")
         self.assertFalse(result["verified"])
-        self.assertEqual(fake.sent, [b"RAW ON\n", "say 游戏测试\n".encode("utf-8")])
+        self.assertEqual(fake.sent, ["say 游戏测试\n".encode("utf-8")])
 
     def test_async_before_banner_is_not_misread_as_banner(self):
         fake = FakeSocket(
             b"[chat] <Player> said M1 is ready\n<<END\n"
             b"Machine One ready\n<<END\n"
-            b"OK RAW\n<<END\n"
             b"OK chat submitted\n<<END\n"
         )
         result = send_m1_chat("你好", connect=lambda *_: fake)
         self.assertEqual(result["skipped_async_frames"], 1)
-        self.assertEqual(fake.sent, [b"RAW ON\n", "say 你好\n".encode("utf-8")])
+        self.assertEqual(fake.sent, ["say 你好\n".encode("utf-8")])
 
-    def test_many_async_frames_fail_closed_before_say(self):
-        from minecraft_doudou.m1_chat import MAX_ASYNC_FRAMES
+    def test_many_async_frames_fail_closed_and_only_send_once(self):
         fake = FakeSocket(
             b"M1\n<<END\n" +
             b"[chat] <Player> noise\n<<END\n" * (MAX_ASYNC_FRAMES + 1)
         )
-        with self.assertRaisesRegex(M1ChatError, "raw_mode_too_many_async_frames"):
-            send_m1_chat("不要发送", connect=lambda *_: fake)
-        self.assertEqual(fake.sent, [b"RAW ON\n"])
+        with self.assertRaisesRegex(M1ChatError, "m1_say_too_many_async_frames"):
+            send_m1_chat("不要重复发送", connect=lambda *_: fake)
+        self.assertEqual(fake.sent, ["say 不要重复发送\n".encode("utf-8")])
 
-    def test_async_followed_by_error_does_not_count_as_ok(self):
+    def test_async_followed_by_error_is_not_accepted(self):
         fake = FakeSocket(
             b"M1\n<<END\n[chat] <Someone> hi\n<<END\n"
-            b"ERR RAW rejected\n<<END\n"
+            b"ERR chat rejected\n<<END\n"
         )
-        with self.assertRaisesRegex(M1ChatError, "raw_mode_not_confirmed"):
+        with self.assertRaisesRegex(M1ChatError, "m1_say_not_confirmed"):
             send_m1_chat("你好", connect=lambda *_: fake)
-        self.assertEqual(fake.sent, [b"RAW ON\n"])
+        self.assertEqual(fake.sent, ["say 你好\n".encode("utf-8")])
 
     def test_unknown_frame_after_async_fails_closed(self):
         fake = FakeSocket(
@@ -135,36 +137,34 @@ class M1ChatTests(unittest.TestCase):
             b"[chat] <Someone> queued\n<<END\n"
             b"WHAT IS THIS\n<<END\n"
         )
-        with self.assertRaisesRegex(M1ChatError, "raw_mode_not_confirmed"):
+        with self.assertRaisesRegex(M1ChatError, "m1_say_not_confirmed"):
             send_m1_chat("你好", connect=lambda *_: fake)
-        self.assertEqual(fake.sent, [b"RAW ON\n"])
+        self.assertEqual(fake.sent, ["say 你好\n".encode("utf-8")])
 
-    def test_chat_containing_ok_never_confirms_raw_mode(self):
+    def test_chat_containing_ok_never_confirms_say(self):
         fake = FakeSocket(
             b"M1\n<<END\n"
-            b"[chat] <Someone> literal OK\nOK RAW\n<<END\n"
+            b"[chat] <Someone> literal OK\nOK chat submitted\n<<END\n"
         )
         with self.assertRaises(Exception):
-            send_m1_chat("不能发", connect=lambda *_: fake)
-        self.assertEqual(fake.sent, [b"RAW ON\n"])
+            send_m1_chat("不能重复发", connect=lambda *_: fake)
+        self.assertEqual(fake.sent, ["say 不能重复发\n".encode("utf-8")])
 
-    def test_async_can_arrive_after_raw_and_say_failure_is_unverified(self):
+    def test_async_followed_by_say_failure_is_unverified(self):
         fake = FakeSocket(
             b"M1\n<<END\n"
-            b"OK RAW\n<<END\n"
             b"[event] player_nearby\n<<END\n"
             b"ERR server rejected message\n<<END\n"
         )
         with self.assertRaisesRegex(M1ChatError, "m1_say_not_confirmed"):
             send_m1_chat("不能算成功", connect=lambda *_: fake)
-        self.assertEqual(fake.sent, [b"RAW ON\n",
-                                     "say 不能算成功\n".encode("utf-8")])
+        self.assertEqual(fake.sent, ["say 不能算成功\n".encode("utf-8")])
 
     def test_socket_reply_missing_sentinel_is_uncertain(self):
-        fake = FakeSocket(b"M1\n<<END\nOK RAW\n<<END\nOK partial")
+        fake = FakeSocket(b"M1\n<<END\nOK partial")
         with self.assertRaises(Exception):
             send_m1_chat("测试", connect=lambda *_: fake)
-        self.assertEqual(fake.sent, [b"RAW ON\n", "say 测试\n".encode("utf-8")])
+        self.assertEqual(fake.sent, ["say 测试\n".encode("utf-8")])
         self.assertTrue(fake.closed)
 
 
