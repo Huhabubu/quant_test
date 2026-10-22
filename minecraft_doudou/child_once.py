@@ -16,6 +16,7 @@ Entry point:
 
 Output: exactly one JSON line on stdout:
     {"chat": {"seq", "event_id", "text", "received_at"} | null,
+     "chats": [all pending authorized chats, oldest-first, max 20],
      "state": {"hp", "food", "clock", "pos"} | {"in_world": false}}
 
 State fields read (and only these): ``in_world``, ``health``, ``hunger``,
@@ -45,29 +46,51 @@ import sys
 import time
 
 
-def fetch_chat(db_path, sender):
-    """Return the newest unhandled chat from ``sender``, or None."""
+MAX_CHAT_BATCH = 20
+
+
+def fetch_chats(db_path, sender):
+    """Peek the complete bounded pending chat batch, oldest first.
+
+    The subsequent prepare ACKs all events through the newest sequence, so
+    omitting earlier unanswered player chats would silently lose them.
+    Fail closed on oversized batches instead of returning only the tail.
+    """
     uri = "file:{}?mode=ro".format(db_path)
     db = sqlite3.connect(uri, uri=True)
     try:
         rows = db.execute(
             "SELECT seq, id, payload, received_at FROM events "
             "WHERE kind = 'chat' AND handled_at IS NULL "
-            "ORDER BY seq DESC LIMIT 20"
+            "ORDER BY seq DESC LIMIT ?",
+            (MAX_CHAT_BATCH + 1,),
         ).fetchall()
     finally:
         db.close()
-    for seq, event_id, payload, received_at in rows:
+    if len(rows) > MAX_CHAT_BATCH:
+        raise ValueError("pending_chat_batch_too_large")
+    chats = []
+    for seq, event_id, payload, received_at in reversed(rows):
         inner = json.loads(payload)
-        if inner.get("sender") == sender:
-            return {
-                "seq": seq,
-                "event_id": event_id,
-                "text": inner.get("text"),
-                "received_at": received_at,
-            }
-    return None
+        if inner.get("sender") != sender:
+            # prepare would ACK this event as well; never silently sweep a
+            # pending chat that the fast-path agent is not allowed to see.
+            raise ValueError("pending_chat_wrong_sender_use_full_path")
+        if not isinstance(inner.get("text"), str):
+            raise ValueError("pending_chat_without_text")
+        chats.append({
+            "seq": seq,
+            "event_id": event_id,
+            "text": inner["text"],
+            "received_at": received_at,
+        })
+    return chats
 
+
+def fetch_chat(db_path, sender):
+    """Compatibility helper returning the most recent pending owner chat."""
+    chats = fetch_chats(db_path, sender)
+    return chats[-1] if chats else None
 
 def fetch_state(state_path):
     """Return the compact reply-citable state snapshot (see module docs)."""
@@ -77,6 +100,13 @@ def fetch_state(state_path):
     except (OSError, ValueError):
         return {"in_world": False}
     if not raw.get("in_world"):
+        return {"in_world": False}
+    # The live Mod includes a millisecond capture clock. Reject stale,
+    # malformed or future-dated world state rather than claiming it is current.
+    captured = raw.get("captured_at_ms")
+    if captured is not None and (
+        type(captured) is not int or abs(time.time() - captured / 1000) > 3
+    ):
         return {"in_world": False}
     try:
         return {
@@ -92,7 +122,8 @@ def fetch_state(state_path):
 def run(db_path, state_path, sender, telemetry_path=None):
     """Execute one fetch; returns the payload dict (also printed by main)."""
     t_start = time.time()
-    chat = fetch_chat(db_path, sender)
+    chats = fetch_chats(db_path, sender)
+    chat = chats[-1] if chats else None
     t_drained = time.time()
     state = fetch_state(state_path)
     t_state = time.time()
@@ -108,7 +139,7 @@ def run(db_path, state_path, sender, telemetry_path=None):
                 }) + "\n")
         except OSError:
             pass  # telemetry must never break the fetch
-    return {"chat": chat, "state": state}
+    return {"chat": chat, "chats": chats, "state": state}
 
 
 def main(argv=None):
@@ -120,7 +151,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         payload = run(args.db, args.state, args.sender, args.telemetry)
-    except (sqlite3.Error, OSError) as exc:
+    except (sqlite3.Error, OSError, ValueError) as exc:
         print("child_once: inbox unavailable: {}".format(exc), file=sys.stderr)
         return 2
     print(json.dumps(payload, ensure_ascii=False))
