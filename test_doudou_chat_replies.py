@@ -73,6 +73,22 @@ class ChatRepliesTests(unittest.TestCase):
         with self.assertRaisesRegex(ReplyError, "pending_chat"):
             self.q.prepare("old", 2, "已经处理")
 
+    def test_restarted_log_backlog_and_delayed_source_are_context_only(self):
+        seq = self.accept("replay", {
+            "type": "chat", "text": "昨天的指令", "sender": "Player",
+            "replayed_after_restart": True,
+        })
+        with self.assertRaisesRegex(ReplyError, "recovered_chat_context_only"):
+            self.q.prepare("replay", seq, "不应该现在回复")
+        delayed = self.accept("delayed", {
+            "type": "chat", "text": "积压许久", "sender": "Player",
+            "received_at": time.time() - 400,
+        })
+        with self.assertRaisesRegex(ReplyError, "source_chat_is_stale"):
+            self.q.prepare("delayed", delayed, "不应该回复迟到消息")
+        self.assertEqual(self.q.stats(), {})
+        self.assertEqual(self.inbox.counts()["pending"], 2)
+
     def test_no_chat_command_injection(self):
         seq = self.accept()
         for bad in ["", "hello\nquit", "\x00", "a" * 201, 1]:
