@@ -163,7 +163,7 @@ project parser, Python standard-library HTTPServer and SQLite.
    reported as such.
 
 3. Muse should arm this **one-shot notifier** as a background task and use the
-   already verified process-exit handoff. It exits on pending chat or death
+   already verified process-exit handoff. It exits on pending chat or urgent death / low_hunger / event_gap
    immediately, with no 3-second quiet window. Mere player_nearby or inventory
    changes accumulate silently. Muse may still take time to start its next
    turn, and there is no verified supported webhook to interrupt a busy agent.
