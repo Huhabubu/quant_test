@@ -47,12 +47,15 @@ class DurableChatTail:
                 # First-ever enrollment: ignore historical chat, start at EOF.
                 with self.outbox.conn:
                     self._checkpoint(signature, stat.st_size)
+                self.recovery_target = stat.st_size
                 return 0
 
             changed = signature != tuple(saved[:2])
             truncated = not changed and stat.st_size < saved[2]
             offset = 0 if changed or truncated else saved[2]
-            if self.recovery_target is None:
+            if changed or truncated:
+                self.recovery_target = stat.st_size
+            elif self.recovery_target is None:
                 # Anything already present at first poll is historical replay.
                 self.recovery_target = stat.st_size
             stream.seek(offset)
