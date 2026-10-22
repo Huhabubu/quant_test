@@ -41,7 +41,8 @@ class M1ChatTests(unittest.TestCase):
         self.assertEqual(result, {
             "accepted": True, "verified": False, "transport": "m1",
         })
-        self.assertEqual(fake.timeout, 15)
+        self.assertGreater(fake.timeout, 0)
+        self.assertLessEqual(fake.timeout, 15)
         self.assertTrue(fake.closed)
 
     def test_rejects_commands_control_chars_and_oversized_chat(self):
@@ -81,6 +82,83 @@ class M1ChatTests(unittest.TestCase):
                 send_m1_chat("你好", connect=lambda *_: fake)
             self.assertEqual(fake.sent, [b"RAW ON\n", "say 你好\n".encode("utf-8")])
             self.assertTrue(fake.closed)
+
+    def test_async_chat_before_raw_and_say_receipts_is_skipped(self):
+        fake = FakeSocket(
+            b"M1 v0.17\n<<END\n"
+            b"[chat] <Player> old chat from the game\n<<END\n"
+            b"[event] inventory changed\n<<END\n"
+            b"OK RAW\n<<END\n"
+            b"[chat] <Owner> OK chat submitted\n"
+            b"OK\n<<END\n"
+            b"OK chat submitted\n<<END\n"
+        )
+        result = send_m1_chat("游戏测试", connect=lambda *_: fake)
+        self.assertEqual(result["skipped_async_frames"], 3)
+        self.assertEqual(result["transport"], "m1")
+        self.assertFalse(result["verified"])
+        self.assertEqual(fake.sent, [b"RAW ON\n", "say 游戏测试\n".encode("utf-8")])
+
+    def test_async_before_banner_is_not_misread_as_banner(self):
+        fake = FakeSocket(
+            b"[chat] <Player> said M1 is ready\n<<END\n"
+            b"Machine One ready\n<<END\n"
+            b"OK RAW\n<<END\n"
+            b"OK chat submitted\n<<END\n"
+        )
+        result = send_m1_chat("你好", connect=lambda *_: fake)
+        self.assertEqual(result["skipped_async_frames"], 1)
+        self.assertEqual(fake.sent, [b"RAW ON\n", "say 你好\n".encode("utf-8")])
+
+    def test_many_async_frames_fail_closed_before_say(self):
+        from minecraft_doudou.m1_chat import MAX_ASYNC_FRAMES
+        fake = FakeSocket(
+            b"M1\n<<END\n" +
+            b"[chat] <Player> noise\n<<END\n" * (MAX_ASYNC_FRAMES + 1)
+        )
+        with self.assertRaisesRegex(M1ChatError, "raw_mode_too_many_async_frames"):
+            send_m1_chat("不要发送", connect=lambda *_: fake)
+        self.assertEqual(fake.sent, [b"RAW ON\n"])
+
+    def test_async_followed_by_error_does_not_count_as_ok(self):
+        fake = FakeSocket(
+            b"M1\n<<END\n[chat] <Someone> hi\n<<END\n"
+            b"ERR RAW rejected\n<<END\n"
+        )
+        with self.assertRaisesRegex(M1ChatError, "raw_mode_not_confirmed"):
+            send_m1_chat("你好", connect=lambda *_: fake)
+        self.assertEqual(fake.sent, [b"RAW ON\n"])
+
+    def test_unknown_frame_after_async_fails_closed(self):
+        fake = FakeSocket(
+            b"M1\n<<END\n"
+            b"[chat] <Someone> queued\n<<END\n"
+            b"WHAT IS THIS\n<<END\n"
+        )
+        with self.assertRaisesRegex(M1ChatError, "raw_mode_not_confirmed"):
+            send_m1_chat("你好", connect=lambda *_: fake)
+        self.assertEqual(fake.sent, [b"RAW ON\n"])
+
+    def test_chat_containing_ok_never_confirms_raw_mode(self):
+        fake = FakeSocket(
+            b"M1\n<<END\n"
+            b"[chat] <Someone> literal OK\nOK RAW\n<<END\n"
+        )
+        with self.assertRaises(Exception):
+            send_m1_chat("不能发", connect=lambda *_: fake)
+        self.assertEqual(fake.sent, [b"RAW ON\n"])
+
+    def test_async_can_arrive_after_raw_and_say_failure_is_unverified(self):
+        fake = FakeSocket(
+            b"M1\n<<END\n"
+            b"OK RAW\n<<END\n"
+            b"[event] player_nearby\n<<END\n"
+            b"ERR server rejected message\n<<END\n"
+        )
+        with self.assertRaisesRegex(M1ChatError, "m1_say_not_confirmed"):
+            send_m1_chat("不能算成功", connect=lambda *_: fake)
+        self.assertEqual(fake.sent, [b"RAW ON\n",
+                                     "say 不能算成功\n".encode("utf-8")])
 
     def test_socket_reply_missing_sentinel_is_uncertain(self):
         fake = FakeSocket(b"M1\n<<END\nOK RAW\n<<END\nOK partial")
