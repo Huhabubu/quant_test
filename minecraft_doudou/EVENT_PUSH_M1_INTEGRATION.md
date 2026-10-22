@@ -315,7 +315,7 @@ bridge.py or start a second game JVM. M1 v0.17.5 already runs locally at
 test server. Prefer reusing this mature existing mod channel.
 
 - New m1_chat.py uses the existing m1_probe.M1Reader framing and mandatory
-  M1 greeting -> RAW ON -> single say <text> command -> <<END reply.
+  M1 greeting -> single say <text> command -> <<END reply (no RAW ON).
   No arbitrary command parameter, no movement/attack/craft/console access;
   host/port are hardcoded 127.0.0.1:26000 with no remote selection.
 - Explicit dispatcher selection ONLY: chat_replies send --m1-say (mutually
@@ -375,8 +375,7 @@ upgrade, JVM restart, or public port exposure in this change.
 
 ### 2026-10-22 P0-D B retest: fix M1 async-frame displacement
 
-Muse B-level evidence showed a chat/event notification frame delivered after RAW ON
-in place of the expected command ACK. The sender misidentified that frame as
+Muse's initial B-level report showed asynchronous chat frames competing with command acknowledgements. The sender misidentified that frame as
 the receipt and stopped **before sending say**. The generated reply remained
 uncertain and was not automatically retried (correct fail-closed behavior).
 In the same test, the main Agent's busy window had already ended 7.4s
@@ -385,8 +384,7 @@ the transport had worked.
 
 Updated \`m1_chat.py\` now waits for a **recognized command response** while
 skipping only complete sentinel-framed notifications with first line
-\`[chat]\` or \`[event]\` (case-insensitive). This applies during greeting,
-RAW ON, and say acknowledgement. Skip budget: 32 frames per phase, max 15
+\`[chat]\` or \`[event]\` (case-insensitive). This applies during greeting and say acknowledgement. Skip budget: 32 frames per phase, max 15
 seconds elapsed per phase; errors and unrecognized frames still fail closed.
 A chat notification containing the word OK cannot masquerade as an ACK.
 Successful M1 replies record the count of skipped async frames as a diagnostic
@@ -419,3 +417,31 @@ bounded failure category, never the chat text or credentials.
 6. Keep existing P0-B production receiver/relay untouched until this
    isolated test and game-log confirmation pass. This patch does not grant
    permission for official-server auto-chat or additional M1 actions.
+
+
+### P0-D 2026-10-22 RAW ON correction (Muse live read-only proof)
+
+Issue #5 comment 6334126656 independently tested the installed M1 v0.17.5
+using the repository's **actual sentinel-framed M1Reader**. Greeting was
+terminated by a standalone <<END line. With no RAW ON, a direct read-only
+where command returned a frame whose position matched state.json exactly.
+The first attempt had queued [chat] notifications ahead of the command
+data frame, so asynchronous frame skipping is still necessary.
+
+The M1 chat sender therefore now performs:
+greeting -> direct single say <model_reply> -> filtered receipt, **without
+RAW ON**. The old RAW mode returned a descriptive line ("Raw mode ON --
+replies end with the <<END marker.") instead of an OK-style acknowledgement;
+the old 15s handshake timeout is avoided. This is a protocol adaptation,
+**not proof that the live M1 say reply shape is OK or that players saw
+anything**. Unknown/ERR command acknowledgements still mark uncertain and
+must not be retransmitted.
+
+Muse's next B-level test should keep the P0-B live stack untouched and
+test with a **new unique chat** in an isolated inbox only. Use one already
+running sender, and a genuine constant-duration 45-60s read-only main
+Agent job (not a short unittest run). Record durable T0/T1/T3/attempt,
+raw child prepare stdout, terminal response status/phase, and T4 evidence
+in the Minecraft chat log. Do not reuse old uncertain rows or start a
+second Minecraft client. Mark B pass only if T4 < T5 and log proof is
+independent of any main-Agent manual chat.
