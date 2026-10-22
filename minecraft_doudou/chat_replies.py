@@ -180,26 +180,47 @@ class ReplyQueue:
             self.conn.rollback()
             raise
         # Never attempt again after possible wire send / crash.
+        diagnostic = ""
         try:
             result = deliver(row[1])
             accepted = isinstance(result, dict) and result.get("accepted") is True
             mocked = accepted and result.get("mock") is True
-        except Exception:
+        except Exception as exc:
             accepted = False
             mocked = False
+            # Stable, bounded failure category without printing chat or secrets.
+            diagnostic = type(exc).__name__
+            if type(exc).__name__ == "M1ChatError":
+                diagnostic = str(exc)[:80]
         state = ("mocked" if mocked else "accepted_unverified") if accepted else "uncertain"
+        skipped = 0
+        if accepted and result.get("transport") == "m1":
+            candidate = result.get("skipped_async_frames", 0)
+            if type(candidate) is int and 0 <= candidate <= 96:
+                skipped = candidate
+        if accepted:
+            if mocked:
+                note = "simulation_only"
+            elif result.get("transport") == "m1":
+                note = "m1_tcp_accepted_unverified"
+                if skipped:
+                    note += f":async_skipped={skipped}"
+            else:
+                note = "bridge_console_submission_only"
+        else:
+            note = "operator_review_required:" + diagnostic
         with self.conn:
             self.conn.execute(
                 "UPDATE chat_replies SET state=?,finished_at=?,result_note=? "
                 "WHERE event_id=? AND state='sending'",
-                (state, time.time(),
-                 ("simulation_only" if mocked else
-                  "m1_tcp_accepted_unverified" if result.get("transport") == "m1"
-                  else "bridge_console_submission_only")
-                 if accepted else "operator_review_required",
-                 row[0]),
+                (state, time.time(), note, row[0]),
             )
-        return {"event_id": row[0], "state": state, "verified": False}
+        output = {"event_id": row[0], "state": state, "verified": False}
+        if skipped:
+            output["skipped_async_frames"] = skipped
+        if not accepted:
+            output["failure_category"] = diagnostic
+        return output
 
     def stats(self):
         rows = self.conn.execute(
