@@ -32,6 +32,22 @@ class ChatEventTests(unittest.TestCase):
         self.assertIsNone(parse_chat("[CHAT] <SekaiSaionji> hello", "Huhabubu"))
         self.assertIsNone(parse_chat("[CHAT] DouDou joined the game", "Huhabubu"))
 
+    def test_ansi_reset_in_real_headlessmc_chat(self):
+        # Real Muse VM lines contain ESC[m between [CHAT] and <player>.
+        line = "[22:50:30] [Render thread/INFO] [CHAT] \x1b[m<Huhabubu> WAKE-TEST-2\n"
+        self.assertEqual(parse_chat(line, "Huhabubu"),
+                         {"type": "chat", "sender": "Huhabubu", "text": "WAKE-TEST-2"})
+        self.assertIsNone(parse_chat(line, "SekaiSaionji"))
+        self.assertIsNone(parse_chat(
+            "[CHAT] \x1b[0m<SekaiSaionji> hello\n", "Huhabubu"))
+        self.assertEqual(parse_chat(
+            "[CHAT] \x1b[32m<Huhabubu> 看\x1b[0m这里\n", "Huhabubu")["text"], "看这里")
+        watcher = MinecraftChatEvents(self.path)
+        watcher.publish_line(line)
+        result = watcher.get()
+        self.assertEqual([x["text"] for x in result["events"]], ["WAKE-TEST-2"])
+        self.assertEqual(result["next_cursor"], 1)
+
     def test_follows_appended_lines_and_never_replays_history(self):
         self.path.write_text("[CHAT] <Huhabubu> 旧的消息\n", encoding="utf-8")
         watcher = MinecraftChatEvents(self.path, interval=0.02)

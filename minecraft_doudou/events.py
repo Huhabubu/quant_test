@@ -15,10 +15,12 @@ import time
 
 CHAT_LINE = re.compile(r"\[CHAT\]\s*<(?P<sender>[A-Za-z0-9_]{3,16})>\s*(?P<text>.*)")
 OWNER_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,16}$")
+# HeadlessMC/JLine can insert ANSI SGR control codes between [CHAT] and <sender>.
+ANSI_CSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def parse_chat(line, allowed_sender):
-    match = CHAT_LINE.search(line)
+    match = CHAT_LINE.search(ANSI_CSI.sub("", line))
     if not match or match.group("sender") != allowed_sender:
         return None
     text = match.group("text").strip()
