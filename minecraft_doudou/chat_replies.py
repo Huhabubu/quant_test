@@ -1,8 +1,9 @@
 """P0-D: durable, chat-only reply handoff for Muse sub-agents.
 
-Child agents compose text; ONE local dispatcher sends it through the existing,
-authenticated HeadlessMC bridge /v1/chat API. No launcher, movement, M1 command,
-or unverified game-write fallback is available here.
+Child agents compose text; ONE local dispatcher sends it through an explicit,
+chat-only transport: the existing HeadlessMC bridge /v1/chat API, or M1's
+pre-existing localhost TCP say verb. No launcher/movement/general M1 gateway
+or arbitrary console command is available here.
 
 Delivery is intentionally at-most-once at the transport boundary: an uncertain
 network result is retained for operator review, never automatically re-sent.
@@ -143,15 +144,28 @@ class ReplyQueue:
         self.conn.execute("BEGIN IMMEDIATE")
         try:
             row = self.conn.execute(
-                "SELECT event_id,reply_text FROM chat_replies "
-                "WHERE state='queued' ORDER BY created_at,event_id LIMIT 1"
+                "SELECT c.event_id,c.reply_text,e.received_at FROM chat_replies c "
+                "LEFT JOIN events e ON e.id=c.event_id "
+                "WHERE c.state='queued' ORDER BY c.created_at,c.event_id LIMIT 1"
             ).fetchone()
             if not row:
                 self.conn.commit()
                 return None
+            now = time.time()
+            if row[2] is None or now - row[2] > MAX_AGE_SECONDS:
+                # Even an initially fresh model reply must not be sent as
+                # stale chat if a dispatcher was offline for minutes.
+                self.conn.execute(
+                    "UPDATE chat_replies SET state='expired_unsent',"
+                    "finished_at=?,result_note='stale_before_transport' "
+                    "WHERE event_id=? AND state='queued'", (now, row[0]),
+                )
+                self.conn.commit()
+                return {"event_id": row[0], "state": "expired_unsent",
+                        "verified": False}
             self.conn.execute(
                 "UPDATE chat_replies SET state='sending',attempted_at=? "
-                "WHERE event_id=?", (time.time(), row[0]),
+                "WHERE event_id=?", (now, row[0]),
             )
             self.conn.commit()
         except BaseException:
