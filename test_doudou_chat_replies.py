@@ -48,11 +48,11 @@ class ChatRepliesTests(unittest.TestCase):
         self.assertEqual(self.q.prepare("e1", seq, "在，我正在建房。"), "duplicate")
         self.assertEqual(self.q.prepare("e1", seq, "另一个回复"), "conflict")
         self.assertEqual(self.q.stats(), {"queued": 1})
-        self.assertIsNone(self.q.send_once(lambda _: None) if False else None)
         path = Path(self.temp.name) / "mock-replies.jsonl"
         result = run_sender(self.db, mock_log=str(path), once=True)
-        self.assertEqual(result["state"], "accepted_unverified")
+        self.assertEqual(result["state"], "mocked")
         self.assertFalse(result["verified"])
+        self.assertEqual(self.q.stats(), {"mocked": 1})
         self.assertEqual(len(path.read_text().splitlines()), 1)
         self.assertIn("在，我正在建房。", path.read_text())
         self.assertIsNone(run_sender(self.db, mock_log=str(path), once=True))
