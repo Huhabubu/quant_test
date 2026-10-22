@@ -142,6 +142,27 @@ def http_deliver(receiver, token, event_id, event, *, opener=urlopen):
             raise OSError("receiver_non_2xx")
 
 
+def deliver_pending(outbox, receiver, token, *, deliver=http_deliver,
+                    max_events=256, max_seconds=0.75):
+    """Drain quickly without starving the log tail when a chat burst arrives."""
+    start = time.monotonic()
+    delivered = 0
+    for _ in range(max_events):
+        if delivered and time.monotonic() - start >= max_seconds:
+            break
+        pending = outbox.next()
+        if pending is None:
+            break
+        event_id, event = pending
+        try:
+            deliver(receiver, token, event_id, event)
+        except (OSError, ValueError):
+            break  # Keep same ID; remote 2xx alone never proves Muse processing.
+        outbox.ack(event_id)
+        delivered += 1
+    return delivered
+
+
 def pump_once(watcher, cursor, tracker, outbox, receiver, token, *, deliver=http_deliver):
     result = watcher.get(after=cursor, wait_ms=250)
     # When watcher memory overflows, this fact must be surfaced in the outbox.
@@ -153,16 +174,7 @@ def pump_once(watcher, cursor, tracker, outbox, receiver, token, *, deliver=http
     if tracker is not None:
         for event in tracker.poll():
             outbox.put(event)
-    for _ in range(8):
-        pending = outbox.next()
-        if pending is None:
-            break
-        event_id, event = pending
-        try:
-            deliver(receiver, token, event_id, event)
-        except (OSError, ValueError):
-            break   # Retain for retry. A failed POST might already have arrived.
-        outbox.ack(event_id)
+    deliver_pending(outbox, receiver, token, deliver=deliver)
     return cursor
 
 
@@ -181,18 +193,21 @@ def main(argv=None):
     token = os.environ.get("DOUDOU_EVENT_TOKEN", "")
     if len(token) < 32 or any(ord(char) <= 32 for char in token):
         parser.error("DOUDOU_EVENT_TOKEN must have >=32 non-whitespace characters")
-    watcher = MinecraftChatEvents(args.log, allowed_sender=args.sender, maxlen=1024)
+    from .durable_log import DurableChatTail
     tracker = StateChangeTracker(args.state) if args.state else None
     outbox = EventOutbox(args.outbox)
-    cursor = 0
-    watcher.start()
+    watcher = DurableChatTail(args.log, args.sender, outbox)
     try:
         while True:
-            cursor = pump_once(watcher, cursor, tracker, outbox, args.receiver, token)
+            watcher.poll()  # Atomic log-offset + event capture; replay after restart.
+            if tracker is not None:
+                for event in tracker.poll():
+                    outbox.put(event)
+            sent = deliver_pending(outbox, args.receiver, token)
+            time.sleep(0.1 if sent or outbox.next() else 0.25)
     except KeyboardInterrupt:
         return 0
     finally:
-        watcher.stop()
         outbox.close()
 
 
