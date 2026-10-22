@@ -171,7 +171,9 @@ class ReplyQueue:
                 "UPDATE chat_replies SET state=?,finished_at=?,result_note=? "
                 "WHERE event_id=? AND state='sending'",
                 (state, time.time(),
-                 ("simulation_only" if mocked else "bridge_console_submission_only")
+                 ("simulation_only" if mocked else
+                  "m1_tcp_accepted_unverified" if result.get("transport") == "m1"
+                  else "bridge_console_submission_only")
                  if accepted else "operator_review_required",
                  row[0]),
             )
@@ -188,14 +190,23 @@ class ReplyQueue:
 
 
 def run_sender(db, *, bridge_url=None, token_file=None, mock_log=None,
-               once=False, poll_seconds=0.2):
-    if (mock_log is None) == (bridge_url is None):
-        raise ReplyError("choose_exactly_one_mock_or_live_transport")
-    if bridge_url:
+               m1_say=False, once=False, poll_seconds=0.2):
+    if sum((mock_log is not None, bridge_url is not None, m1_say)) != 1:
+        raise ReplyError("choose_exactly_one_mock_bridge_or_m1_transport")
+    if bridge_url is not None:
+        if not token_file:
+            raise ReplyError("bridge_token_file_required")
         validate_bridge_url(bridge_url)
         token = read_private_token(token_file)
         deliver = lambda text: submit_chat(bridge_url, token, text)
+    elif m1_say:
+        if token_file is not None:
+            raise ReplyError("m1_uses_local_tcp_not_bridge_token")
+        from .m1_chat import send_m1_chat
+        deliver = send_m1_chat
     else:
+        if token_file is not None:
+            raise ReplyError("mock_must_not_have_bridge_token")
         mock = Path(mock_log)
         mock.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         def deliver(text):
@@ -232,14 +243,16 @@ def main(argv=None):
             command.add_argument("--bridge-url")
             command.add_argument("--token-file")
             command.add_argument("--mock-log")
+            command.add_argument("--m1-say", action="store_true",
+                                 help="Explicit opt-in to local M1 say-only sender")
             command.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
     if args.command == "send":
         if bool(args.bridge_url) != bool(args.token_file):
-            parser.error("live bridge requires bridge-url and token-file")
+            parser.error("bridge requires bridge-url and token-file")
         result = run_sender(args.db, bridge_url=args.bridge_url,
                             token_file=args.token_file, mock_log=args.mock_log,
-                            once=args.once)
+                            m1_say=args.m1_say, once=args.once)
         return 0 if result is None or result["state"] in ("mocked", "accepted_unverified") else 1
     queue = ReplyQueue(args.db)
     try:
