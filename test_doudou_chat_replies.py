@@ -154,6 +154,50 @@ class ChatRepliesTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ReplyError):
                 validate_bridge_url(invalid)
 
+    def test_m1_sender_path_queues_once_and_marks_transport_unverified(self):
+        from unittest.mock import patch
+        seq = self.accept()
+        self.q.prepare("e1", seq, "我是豆豆，我还在忙任务。")
+        with patch("minecraft_doudou.m1_chat.send_m1_chat",
+                   return_value={"accepted": True, "verified": False,
+                                 "transport": "m1"}) as m1:
+            result = run_sender(self.db, m1_say=True, once=True)
+            self.assertEqual(result["state"], "accepted_unverified")
+            self.assertFalse(result["verified"])
+            self.assertIsNone(run_sender(self.db, m1_say=True, once=True))
+            m1.assert_called_once_with("我是豆豆，我还在忙任务。")
+        row = self.q.conn.execute(
+            "SELECT result_note FROM chat_replies WHERE event_id='e1'"
+        ).fetchone()
+        self.assertEqual(row[0], "m1_tcp_accepted_unverified")
+        self.assertEqual(self.q.stats(), {"accepted_unverified": 1})
+
+    def test_m1_failure_is_uncertain_and_never_retried(self):
+        from unittest.mock import patch
+        seq = self.accept()
+        self.q.prepare("e1", seq, "未确认的消息")
+        with patch("minecraft_doudou.m1_chat.send_m1_chat",
+                   side_effect=TimeoutError("possibly delivered")) as m1:
+            self.assertEqual(
+                run_sender(self.db, m1_say=True, once=True)["state"], "uncertain"
+            )
+            self.assertIsNone(run_sender(self.db, m1_say=True, once=True))
+            m1.assert_called_once_with("未确认的消息")
+        self.assertEqual(self.q.stats(), {"uncertain": 1})
+
+    def test_m1_must_be_explicitly_selected_without_bridge_or_mock(self):
+        path = Path(self.temp.name) / "mock.jsonl"
+        for options in (
+            {"m1_say": True, "mock_log": str(path)},
+            {"m1_say": True, "bridge_url": "http://127.0.0.1:8765/v1/chat",
+             "token_file": str(path)},
+            {"m1_say": True, "token_file": str(path)},
+            {"bridge_url": "http://127.0.0.1:8765/v1/chat"},
+        ):
+            with self.subTest(options=options), self.assertRaises(ReplyError):
+                run_sender(self.db, once=True, **options)
+        self.assertEqual(self.q.stats(), {})
+
     def test_sends_through_existing_bridge_chat_not_arbitrary_commands(self):
         console = FakeConsole()
         bridge = ThreadingHTTPServer(
