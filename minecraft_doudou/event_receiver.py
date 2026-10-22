@@ -150,7 +150,12 @@ def serve(db, port, token):
                 self.send_json(413 if length > MAX_BODY else 400,
                                {"error": "invalid_body_size"})
                 return
-            parsed = validate_request(self.headers, self.rfile.read(length))
+            self.connection.settimeout(2.0)
+            try:
+                raw = self.rfile.read(length)
+            except OSError:
+                return  # Disconnect stalled/malformed local request; keep serving.
+            parsed = validate_request(self.headers, raw)
             if parsed is None:
                 self.send_json(400, {"error": "invalid_event"})
                 return
@@ -204,7 +209,7 @@ def main(argv=None):
             cmd.add_argument("--poll-seconds", type=float, default=0.1)
         if name == "drain":
             cmd.add_argument("--after-seq", type=int, default=0)
-            cmd.add_argument("--limit", type=int, default=1000)
+            cmd.add_argument("--limit", type=int, default=200)
         if name == "ack":
             cmd.add_argument("--through-seq", type=int, required=True)
     args = parser.parse_args(argv)
