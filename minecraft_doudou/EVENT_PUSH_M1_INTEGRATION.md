@@ -324,7 +324,10 @@ test server. Prefer reusing this mature existing mod channel.
   line separators, initial slash commands, or Baritone-prefixed # commands.
   The model-generated text still must be reviewed/selected by the chat agent.
 - A positive M1 OK receipt results in accepted_unverified and note
-  m1_tcp_accepted_unverified, NEVER verified game delivery. ERR/FAIL, ambiguous
+  m1_tcp_accepted_unverified, NEVER verified game delivery. Replayed log
+  history (replayed_after_restart=true) and source-delayed (>120s) chats
+  are treated as context-only; queued replies also expire before sending.
+  ERR/FAIL, ambiguous
   reply, timeout, closed TCP or unknown greeting become uncertain.
   A reply marked sending/uncertain is NEVER automatically retransmitted, since
   M1 does not provide an idempotency key or definitive server ACK.
