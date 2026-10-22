@@ -5,6 +5,8 @@ Reuse the existing sentinel-framed M1Reader, but do not assume that the next
 frame after a command belongs to that command. A successful M1 receipt is NOT
 proof that players saw the chat in Minecraft.
 """
+import json
+import os
 import re
 import socket
 import time
@@ -63,6 +65,48 @@ def _frame_type(frame):
     return "unknown"
 
 
+def _frame_category(frame, kind):
+    """Desensitized frame class for diagnostics; never stores content."""
+    if kind != "async":
+        return kind
+    lines = [line.strip() for line in frame.splitlines() if line.strip()]
+    first = lines[0].casefold() if lines else ""
+    if first.startswith("[chat]"):
+        return "async_chat"
+    if first.startswith("[event]"):
+        return "async_event"
+    return "async_other"
+
+
+def _diag_record(phase, result, frames, skipped, started, clock, exc=None):
+    """Append one JSONL diagnostics line when M1_CHAT_DIAG names a path.
+
+    Metadata only: stage, per-frame categories, skip count, wait time and
+    exception type/message. Never frame text. Any diagnostics failure is
+    swallowed so it can never change send behaviour.
+    """
+    path = os.environ.get("M1_CHAT_DIAG")
+    if not path:
+        return
+    try:
+        record = {
+            "ts": time.time(),
+            "phase": phase,
+            "result": result,
+            "frames": frames,
+            "frame_count": len(frames),
+            "skipped": skipped,
+            "last_frame": frames[-1] if frames else None,
+            "wait_s": round(clock() - started, 3),
+        }
+        if exc is not None:
+            record["exc"] = type(exc).__name__ + ":" + str(exc)
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def _await_frame(reader, sock, phase, accepted, *, clock=time.monotonic):
     """Bound total wall time AND number of unsolicited frames per phase.
 
@@ -70,22 +114,30 @@ def _await_frame(reader, sock, phase, accepted, *, clock=time.monotonic):
     filter while waiting for each actual command's acknowledgement.
     """
     deadline = clock() + FRAME_WAIT_SECONDS
+    started = clock()
     skipped = 0
-    while True:
-        remaining = deadline - clock()
-        if remaining <= 0:
-            raise M1ChatError(phase + "_receipt_deadline_exceeded")
-        sock.settimeout(remaining)
-        frame = reader.read_reply()
-        kind = _frame_type(frame)
-        if kind == "async":
-            skipped += 1
-            if skipped > MAX_ASYNC_FRAMES:
-                raise M1ChatError(phase + "_too_many_async_frames")
-            continue
-        if accepted(frame, kind):
-            return skipped
-        raise M1ChatError(phase + "_not_confirmed")
+    frames = []
+    try:
+        while True:
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise M1ChatError(phase + "_receipt_deadline_exceeded")
+            sock.settimeout(remaining)
+            frame = reader.read_reply()
+            kind = _frame_type(frame)
+            frames.append(_frame_category(frame, kind))
+            if kind == "async":
+                skipped += 1
+                if skipped > MAX_ASYNC_FRAMES:
+                    raise M1ChatError(phase + "_too_many_async_frames")
+                continue
+            if accepted(frame, kind):
+                _diag_record(phase, "accepted", frames, skipped, started, clock)
+                return skipped
+            raise M1ChatError(phase + "_not_confirmed")
+    except Exception as exc:
+        _diag_record(phase, "error", frames, skipped, started, clock, exc)
+        raise
 
 
 def send_m1_chat(text, *, connect=socket.create_connection):
