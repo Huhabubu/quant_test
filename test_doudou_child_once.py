@@ -130,5 +130,55 @@ class ChildOnceTests(unittest.TestCase):
         self.assertEqual(payload["state"], {"in_world": False})
 
 
+    def test_multiple_messages_return_oldest_first_without_ack_loss(self):
+        _make_inbox(self.db_path, [
+            (1, "first", "Huhabubu", "First question", 100.0, None),
+            (2, "second", "Huhabubu", "Second question", 101.0, None),
+        ])
+        _make_state(self.state_path)
+        payload = child_once.run(self.db_path, self.state_path, "Huhabubu")
+        self.assertEqual(
+            [row["event_id"] for row in payload["chats"]],
+            ["first", "second"],
+        )
+        self.assertEqual(payload["chat"]["event_id"], "second")
+        db = sqlite3.connect(self.db_path)
+        self.assertEqual(
+            db.execute("SELECT COUNT(*) FROM events WHERE handled_at IS NULL")
+              .fetchone()[0], 2,
+        )
+        db.close()
+
+    def test_fast_path_fails_closed_if_unauthorized_pending_chat(self):
+        _make_inbox(self.db_path, [
+            (1, "other", "SomeoneElse", "ignore me", 100.0, None),
+            (2, "owner", "Huhabubu", "hi", 101.0, None),
+        ])
+        _make_state(self.state_path)
+        with self.assertRaisesRegex(ValueError, "wrong_sender"):
+            child_once.run(self.db_path, self.state_path, "Huhabubu")
+
+    def test_fast_path_fails_closed_on_more_than_twenty_pending(self):
+        _make_inbox(self.db_path, [
+            (i, "id-{}".format(i), "Huhabubu", "hello", float(i), None)
+            for i in range(1, 22)
+        ])
+        _make_state(self.state_path)
+        with self.assertRaisesRegex(ValueError, "too_large"):
+            child_once.run(self.db_path, self.state_path, "Huhabubu")
+
+    def test_stale_world_state_is_not_returned_as_current(self):
+        import time
+        _make_inbox(self.db_path, [
+            (1, "hi", "Huhabubu", "hungry?", 100.0, None),
+        ])
+        _make_state(self.state_path, captured_at_ms=int((time.time() - 20) * 1000))
+        payload = child_once.run(self.db_path, self.state_path, "Huhabubu")
+        self.assertEqual(payload["state"], {"in_world": False})
+        _make_state(self.state_path, captured_at_ms=int(time.time() * 1000))
+        payload2 = child_once.run(self.db_path, self.state_path, "Huhabubu")
+        self.assertEqual(payload2["state"]["food"], 11)
+
+
 if __name__ == "__main__":
     unittest.main()
