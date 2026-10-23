@@ -82,9 +82,18 @@ class ReplyQueue:
             "created_at REAL NOT NULL, attempted_at REAL, finished_at REAL, "
             "result_note TEXT NOT NULL DEFAULT '')"
         )
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS task_handoffs ("
+            "event_id TEXT PRIMARY KEY, source_seq INTEGER NOT NULL, "
+            "instruction TEXT NOT NULL, lane TEXT NOT NULL, "
+            "priority INTEGER NOT NULL, state TEXT NOT NULL, "
+            "created_at REAL NOT NULL, claimed_at REAL, claimed_by TEXT, "
+            "finished_at REAL, result_note TEXT NOT NULL DEFAULT '')"
+        )
         self.conn.commit()
 
-    def prepare(self, event_id, through_seq, text, *, now=None):
+    def prepare(self, event_id, through_seq, text, *, now=None,
+                routes=None, authorized_sender=None):
         if not isinstance(event_id, str) or not ID_PATTERN.fullmatch(event_id):
             raise ReplyError("invalid_event_id")
         if type(through_seq) is not int or through_seq < 1:
@@ -102,6 +111,31 @@ class ReplyQueue:
             ).fetchone()
             if prev is not None:
                 outcome = "duplicate" if prev[0] == text else "conflict"
+                if outcome == "duplicate" and routes is not None:
+                    # A pre-existing legacy reply could have ACKed a task
+                    # without persisting any handoff. Never report routed
+                    # success in that situation. No new send is permitted.
+                    if not isinstance(routes, list):
+                        raise ReplyError("invalid_chat_routes")
+                    for route in routes:
+                        if not isinstance(route, dict):
+                            raise ReplyError("invalid_chat_route")
+                        eid = route.get("event_id")
+                        record = self.conn.execute(
+                            "SELECT lane,priority FROM task_handoffs "
+                            "WHERE event_id=?", (eid,),
+                        ).fetchone()
+                        if route.get("kind") == "task":
+                            lane = route.get("lane", "game")
+                            priority = (1 if route.get("priority", "normal")
+                                        == "urgent" else 0)
+                            if record != (lane, priority):
+                                raise ReplyError("duplicate_without_matching_handoff")
+                        elif route.get("kind") == "chat":
+                            if record is not None:
+                                raise ReplyError("duplicate_conflicting_handoff")
+                        else:
+                            raise ReplyError("invalid_chat_route")
                 self.conn.commit()
                 return outcome
             row = self.conn.execute(
@@ -131,6 +165,54 @@ class ReplyQueue:
             ).fetchone()[0]
             if newer:
                 raise ReplyError("newer_chat_must_be_reviewed_first")
+            if routes is not None:
+                # The main agent must explicitly classify EVERY pending chat in
+                # this ACK range. Task records are committed in the SAME
+                # transaction as the reply and ACK: reply without handoff is
+                # impossible when routed mode is used.
+                if (not isinstance(routes, list) or not 1 <= len(routes) <= 20
+                        or not isinstance(authorized_sender, str)
+                        or not authorized_sender):
+                    raise ReplyError("invalid_chat_routes")
+                pending = self.conn.execute(
+                    "SELECT seq,id,payload FROM events "
+                    "WHERE kind='chat' AND handled_at IS NULL AND seq<=? "
+                    "ORDER BY seq", (through_seq,),
+                ).fetchall()
+                ids = [r[1] for r in pending]
+                if (not ids or ids[-1] != event_id
+                        or len(ids) != len(routes)
+                        or any(not isinstance(r, dict)
+                               or r.get("event_id") != eid
+                               for r, eid in zip(routes, ids))):
+                    raise ReplyError("routes_must_cover_every_pending_chat_in_order")
+                for (source_seq, source_id, payload), route in zip(pending, routes):
+                    source = json.loads(payload)
+                    if source.get("sender") != authorized_sender:
+                        raise ReplyError("unauthorized_chat_in_routed_batch")
+                    kind = route.get("kind")
+                    if kind == "chat":
+                        if set(route) != {"event_id", "kind"}:
+                            raise ReplyError("invalid_chat_route")
+                        continue
+                    if kind != "task" or not set(route).issubset(
+                            {"event_id", "kind", "lane", "priority"}):
+                        raise ReplyError("invalid_chat_route")
+                    lane = route.get("lane", "game")
+                    priority = route.get("priority", "normal")
+                    if lane not in ("game", "research") or priority not in (
+                            "normal", "urgent"):
+                        raise ReplyError("invalid_task_route")
+                    instruction = source.get("text")
+                    if not isinstance(instruction, str) or not instruction.strip():
+                        raise ReplyError("invalid_task_instruction")
+                    self.conn.execute(
+                        "INSERT INTO task_handoffs "
+                        "(event_id,source_seq,instruction,lane,priority,state,created_at) "
+                        "VALUES(?,?,?,?,?,'queued',?)",
+                        (source_id, source_seq, instruction, lane,
+                         1 if priority == "urgent" else 0, when),
+                    )
             self.conn.execute(
                 "INSERT INTO chat_replies(event_id,source_seq,reply_text,state,created_at)"
                 " VALUES(?,?,?,'queued',?)",
@@ -138,9 +220,12 @@ class ReplyQueue:
             )
             # Classification/response decision is now durable. The physical
             # send status is tracked separately in chat_replies.
+            # Never ACK death, low_hunger, event_gap, etc. as a side effect
+            # of replying to chat. They belong to the main event workflow.
             self.conn.execute(
                 "UPDATE events SET handled_at=? "
-                "WHERE handled_at IS NULL AND seq<=?", (when, through_seq),
+                "WHERE handled_at IS NULL AND kind='chat' AND seq<=?",
+                (when, through_seq),
             )
             self.conn.commit()
             return "queued"
@@ -274,14 +359,18 @@ def run_sender(db, *, bridge_url=None, token_file=None, mock_log=None,
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Chat-only Muse reply handoff")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("prepare", "send", "stats"):
+    for name in ("prepare", "prepare-routed", "send", "stats"):
         command = sub.add_parser(name)
         command.add_argument("--db", required=True)
-        if name == "prepare":
+        if name in ("prepare", "prepare-routed"):
             command.add_argument("--event-id", required=True)
             command.add_argument("--through-seq", required=True, type=int)
             command.add_argument("--text", required=True,
                                  help="MODEL-generated chat text, not a canned template")
+        if name == "prepare-routed":
+            command.add_argument("--routes-json", required=True,
+                                 help="ordered explicit chat/task decisions for ALL pending chats")
+            command.add_argument("--sender", default="Huhabubu")
         if name == "send":
             command.add_argument("--bridge-url")
             command.add_argument("--token-file")
@@ -299,8 +388,16 @@ def main(argv=None):
         return 0 if result is None or result["state"] in ("mocked", "accepted_unverified") else 1
     queue = ReplyQueue(args.db)
     try:
-        if args.command == "prepare":
-            result = queue.prepare(args.event_id, args.through_seq, args.text)
+        if args.command in ("prepare", "prepare-routed"):
+            try:
+                routes = (json.loads(args.routes_json)
+                          if args.command == "prepare-routed" else None)
+            except ValueError as exc:
+                raise ReplyError("invalid_routes_json") from exc
+            result = queue.prepare(
+                args.event_id, args.through_seq, args.text, routes=routes,
+                authorized_sender=(args.sender
+                                   if args.command == "prepare-routed" else None))
             print(json.dumps({"status": result, "event_id": args.event_id}))
             return 0 if result in ("queued", "duplicate") else 1
         print(json.dumps(queue.stats()))

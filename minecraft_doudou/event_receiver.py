@@ -17,6 +17,8 @@ ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 MAX_BODY = 65536
 MAX_PENDING = 10000
 WAKE_TYPES = ("chat", "death", "low_hunger", "event_gap")
+CHAT_TYPES = ("chat",)
+NONCHAT_TYPES = tuple(t for t in WAKE_TYPES if t != "chat")
 
 
 class EventInbox:
@@ -77,11 +79,13 @@ class EventInbox:
         return {"pending": row[0], "oldest_age_s":
                 round(max(0.0, time.time() - row[1]), 3) if row[1] else 0}
 
-    def actionable(self):
-        placeholders = ",".join("?" for _ in WAKE_TYPES)
+    def actionable(self, types=WAKE_TYPES):
+        if not types or not set(types).issubset(WAKE_TYPES):
+            raise ValueError("invalid_wake_types")
+        placeholders = ",".join("?" for _ in types)
         return self.conn.execute(
             "SELECT seq,id,kind FROM events WHERE handled_at IS NULL "
-            f"AND kind IN ({placeholders}) ORDER BY seq LIMIT 1", WAKE_TYPES
+            f"AND kind IN ({placeholders}) ORDER BY seq LIMIT 1", tuple(types)
         ).fetchone()
 
     def ack_through(self, seq):
@@ -178,12 +182,12 @@ def serve(db, port, token):
         inbox.close()
 
 
-def arm(db, poll_seconds=0.1, timeout=0):
+def arm(db, poll_seconds=0.1, timeout=0, types=WAKE_TYPES):
     inbox = EventInbox(db)
     started = time.monotonic()
     try:
         while True:
-            event = inbox.actionable()
+            event = inbox.actionable(types)
             if event is not None:
                 print(json.dumps({"wake": True, "first_seq": event[0],
                                   "type": event[2], **inbox.counts()}), flush=True)
@@ -207,6 +211,9 @@ def main(argv=None):
         if name == "arm":
             cmd.add_argument("--timeout", type=float, default=0)
             cmd.add_argument("--poll-seconds", type=float, default=0.1)
+            cmd.add_argument("--types", choices=("all", "chat", "nonchat"),
+                             default="all",
+                             help="chat routes to main conversation agent; nonchat for event watcher")
         if name == "drain":
             cmd.add_argument("--after-seq", type=int, default=0)
             cmd.add_argument("--limit", type=int, default=200)
@@ -227,7 +234,9 @@ def main(argv=None):
     if args.command == "arm":
         if not 0.02 <= args.poll_seconds <= 5 or args.timeout < 0:
             parser.error("invalid poll/timeout")
-        return arm(args.db, args.poll_seconds, args.timeout)
+        types = (CHAT_TYPES if args.types == "chat" else
+                 NONCHAT_TYPES if args.types == "nonchat" else WAKE_TYPES)
+        return arm(args.db, args.poll_seconds, args.timeout, types)
     inbox = EventInbox(args.db)
     try:
         if args.command == "drain":
