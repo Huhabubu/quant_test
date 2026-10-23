@@ -84,9 +84,9 @@ class MainAgentTaskHandoffTests(unittest.TestCase):
             ], authorized_sender="Huhabubu")
         with self.assertRaisesRegex(ReplyError, "invalid_chat_route"):
             self.reply.prepare("b", seq, "收到", routes=[
-                {"event_id": "a", "kind": "chat"},
-                {"event_id": "b", "kind": "execute_now"},
-            ], authorized_sender="OtherPerson")
+                {"event_id": "a", "kind": "execute_now"},
+                {"event_id": "b", "kind": "chat"},
+            ], authorized_sender="Huhabubu")
         self.assertEqual(len(self.inbox.pending()), 2)
         self.assertEqual(self.tasks.list_tasks(), [])
 
