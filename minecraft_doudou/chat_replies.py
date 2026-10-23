@@ -111,6 +111,31 @@ class ReplyQueue:
             ).fetchone()
             if prev is not None:
                 outcome = "duplicate" if prev[0] == text else "conflict"
+                if outcome == "duplicate" and routes is not None:
+                    # A pre-existing legacy reply could have ACKed a task
+                    # without persisting any handoff. Never report routed
+                    # success in that situation. No new send is permitted.
+                    if not isinstance(routes, list):
+                        raise ReplyError("invalid_chat_routes")
+                    for route in routes:
+                        if not isinstance(route, dict):
+                            raise ReplyError("invalid_chat_route")
+                        eid = route.get("event_id")
+                        record = self.conn.execute(
+                            "SELECT lane,priority FROM task_handoffs "
+                            "WHERE event_id=?", (eid,),
+                        ).fetchone()
+                        if route.get("kind") == "task":
+                            lane = route.get("lane", "game")
+                            priority = (1 if route.get("priority", "normal")
+                                        == "urgent" else 0)
+                            if record != (lane, priority):
+                                raise ReplyError("duplicate_without_matching_handoff")
+                        elif route.get("kind") == "chat":
+                            if record is not None:
+                                raise ReplyError("duplicate_conflicting_handoff")
+                        else:
+                            raise ReplyError("invalid_chat_route")
                 self.conn.commit()
                 return outcome
             row = self.conn.execute(
