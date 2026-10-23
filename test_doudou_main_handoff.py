@@ -111,6 +111,16 @@ class MainAgentTaskHandoffTests(unittest.TestCase):
         self.assertEqual(len(self.tasks.list_tasks()), 1)
         self.assertEqual(self.reply.stats()["queued"], 1)
 
+    def test_legacy_reply_cannot_be_reinterpreted_as_routed_task(self):
+        seq = self.add("legacy", "去挖矿")
+        self.assertEqual(self.reply.prepare("legacy", seq, "收到"), "queued")
+        with self.assertRaisesRegex(ReplyError, "duplicate_without_matching_handoff"):
+            self.reply.prepare("legacy", seq, "收到", routes=[
+                {"event_id": "legacy", "kind": "task"}
+            ], authorized_sender="Huhabubu")
+        self.assertEqual(self.tasks.list_tasks(), [])
+        self.assertEqual(self.reply.stats()["queued"], 1)
+
     def test_game_single_owner_research_can_run_in_parallel(self):
         for eid, text, lane in (
             ("g1", "采矿", "game"),
