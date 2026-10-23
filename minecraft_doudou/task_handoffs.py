@@ -15,8 +15,8 @@ import sqlite3
 import sys
 import time
 
-WORKER_ID = re.compile(r"[A-Za-z0-9_.:-]{1,80}\\Z")
-EVENT_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\\Z")
+WORKER_ID = re.compile(r"[A-Za-z0-9_.:-]{1,80}\Z")
+EVENT_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 
 
 class TaskError(ValueError):
