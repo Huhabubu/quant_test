@@ -1,5 +1,14 @@
 # DouDou chat: C fast path is the default (2026-10-22)
 
+> **Architecture update (2026-10-23, candidate branch only):** The owner now
+> chooses **MAIN Muse Agent as the sole chat and task-intent owner**, with
+> multiple child agents executing delegated work. This runbook is the
+> **legacy chat-child procedure**, not the new main-agent launch plan.
+> For the proposed new workflow, see [MAIN_CHAT_TASK_ROUTING.md](MAIN_CHAT_TASK_ROUTING.md)
+> and use atomic `chat_replies prepare-routed`; **legacy `prepare` by itself
+> does not preserve delegated tasks**. Do not switch live runtime before
+> candidate CI and Muse handoff tests.
+
 **Decision:** The owner chose variant C without further owner-assisted gameplay
 benchmarking. The earlier A/B comparison and 11-message real game experiment
 are sufficient to choose the default workflow, **not** sufficient to claim
