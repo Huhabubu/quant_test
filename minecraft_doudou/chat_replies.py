@@ -21,6 +21,7 @@ from urllib.request import Request, urlopen
 
 from .bridge import InvalidCommand, quote_hmc
 from .event_receiver import ID_PATTERN
+from .chat_policy import admitted_chat, can_issue_tasks
 
 from .event_lifecycle import MAX_AGE_SECONDS, stale_reason
 
@@ -204,9 +205,14 @@ class ReplyQueue:
                     raise ReplyError("routes_must_cover_every_pending_chat_in_order")
                 for (source_seq, source_id, payload), route in zip(pending, routes):
                     source = json.loads(payload)
-                    if source.get("sender") != authorized_sender:
+                    player = source.get("sender")
+                    if not admitted_chat(player, source.get("text"),
+                                         authorized_sender):
                         raise ReplyError("unauthorized_chat_in_routed_batch")
                     kind = route.get("kind")
+                    if kind == "task" and not can_issue_tasks(
+                            player, authorized_sender):
+                        raise ReplyError("non_owner_task_forbidden")
                     if kind == "chat":
                         if set(route) != {"event_id", "kind"}:
                             raise ReplyError("invalid_chat_route")
