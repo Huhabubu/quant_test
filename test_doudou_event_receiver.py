@@ -98,7 +98,7 @@ class InboxTests(unittest.TestCase):
         self.assertEqual(post(b'{"id":"","event":{"type":"chat"}}')[0], 400)
         self.assertEqual(post(b"x" * (MAX_BODY + 1))[0], 413)
         body = json.dumps({"id": "unique_1",
-                           "event": {"type": "chat", "text": "你好"}}).encode()
+                           "event": {"type": "chat", "sender": "Huhabubu", "text": "你好"}}).encode()
         self.assertEqual(post(body)[1]["status"], "accepted")
         self.assertEqual(post(body)[1]["status"], "duplicate")
         self.assertEqual(post(body.replace(b"unique_1", b"unique_2"))[0], 200)
