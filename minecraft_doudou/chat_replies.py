@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 from .bridge import InvalidCommand, quote_hmc
 from .event_receiver import ID_PATTERN
 
-MAX_AGE_SECONDS = 120
+from .event_lifecycle import MAX_AGE_SECONDS, stale_reason
 
 
 class ReplyError(ValueError):
@@ -159,7 +159,6 @@ class ReplyQueue:
             # A new fresh chat must NEVER revive/ACK/execute older stale
             # chat commands. Even if the coordinator is down, fail closed and
             # require explicit quarantine/review before preparing this batch.
-            from .event_lifecycle import stale_reason
             previous_chats = self.conn.execute(
                 "SELECT id,payload,received_at FROM events "
                 "WHERE kind='chat' AND handled_at IS NULL AND seq<=?",
