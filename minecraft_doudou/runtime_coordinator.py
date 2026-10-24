@@ -49,7 +49,7 @@ def load_config(path):
         raise CoordinatorError("invalid_systemd_units")
     # systemctl receives an argv list, never a shell; only exact safe names.
     import re
-    pattern = re.compile(r"[A-Za-z0-9_.@-]{1,128}\\Z")
+    pattern = re.compile(r"[A-Za-z0-9_.@-]{1,128}\Z")
     if any(not isinstance(name, str) or not name
            or not isinstance(unit, str) or not pattern.fullmatch(unit)
            or not unit.endswith(".service")
