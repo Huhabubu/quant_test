@@ -21,8 +21,9 @@ from urllib.request import Request, urlopen
 
 from .bridge import InvalidCommand, quote_hmc
 from .event_receiver import ID_PATTERN
+from .chat_policy import admitted_chat, can_issue_tasks
 
-MAX_AGE_SECONDS = 120
+from .event_lifecycle import MAX_AGE_SECONDS, stale_reason
 
 
 class ReplyError(ValueError):
@@ -156,6 +157,22 @@ class ReplyQueue:
                     and source_time > 0
                     and when - source_time > MAX_AGE_SECONDS):
                 raise ReplyError("source_chat_is_stale_do_not_reply")
+            # A new fresh chat must NEVER revive/ACK/execute older stale
+            # chat commands. Even if the coordinator is down, fail closed and
+            # require explicit quarantine/review before preparing this batch.
+            previous_chats = self.conn.execute(
+                "SELECT id,payload,received_at FROM events "
+                "WHERE kind='chat' AND handled_at IS NULL AND seq<=?",
+                (through_seq,),
+            ).fetchall()
+            for old_id, old_payload, old_received in previous_chats:
+                try:
+                    old_event = json.loads(old_payload)
+                    old_reason = stale_reason(old_event, old_received, when)
+                except (ValueError, TypeError, AttributeError):
+                    old_reason = "malformed_chat_requires_review"
+                if old_reason is not None:
+                    raise ReplyError("pending_chat_requires_review:" + old_reason)
             # Fail closed when through_seq includes a pending chat later than
             # the event being answered, to avoid accidentally ACKing a new turn.
             newer = self.conn.execute(
@@ -188,9 +205,14 @@ class ReplyQueue:
                     raise ReplyError("routes_must_cover_every_pending_chat_in_order")
                 for (source_seq, source_id, payload), route in zip(pending, routes):
                     source = json.loads(payload)
-                    if source.get("sender") != authorized_sender:
+                    player = source.get("sender")
+                    if not admitted_chat(player, source.get("text"),
+                                         authorized_sender):
                         raise ReplyError("unauthorized_chat_in_routed_batch")
                     kind = route.get("kind")
+                    if kind == "task" and not can_issue_tasks(
+                            player, authorized_sender):
+                        raise ReplyError("non_owner_task_forbidden")
                     if kind == "chat":
                         if set(route) != {"event_id", "kind"}:
                             raise ReplyError("invalid_chat_route")

@@ -184,7 +184,10 @@ def main(argv=None):
     parser.add_argument("--state", help="Existing DouDou state.json; optional")
     parser.add_argument("--receiver", required=True, help="Confirmed localhost HTTP POST endpoint")
     parser.add_argument("--outbox", required=True, help="Private sqlite spool path")
-    parser.add_argument("--sender", default="Huhabubu")
+    parser.add_argument("--sender", default="Huhabubu",
+                        help="specific sender, or '*' for ONE all-player reader")
+    parser.add_argument("--owner", default="Huhabubu",
+                        help="owner whose messages need no wake word")
     args = parser.parse_args(argv)
     try:
         validate_receiver(args.receiver)
@@ -196,7 +199,7 @@ def main(argv=None):
     from .durable_log import DurableChatTail
     tracker = StateChangeTracker(args.state) if args.state else None
     outbox = EventOutbox(args.outbox)
-    watcher = DurableChatTail(args.log, args.sender, outbox)
+    watcher = DurableChatTail(args.log, args.sender, outbox, owner=args.owner)
     try:
         while True:
             watcher.poll()  # Atomic log-offset + event capture; replay after restart.
