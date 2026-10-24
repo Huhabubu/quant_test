@@ -8,7 +8,7 @@ Minecraft self-echo must never feed a reply loop back into MAIN.
 """
 import re
 
-PLAYER_NAME = re.compile(r"[A-Za-z0-9_]{3,16}\\Z")
+PLAYER_NAME = re.compile(r"[A-Za-z0-9_]{3,16}\Z")
 WAKE_WORDS = ("doudou", "豆豆")
 SELF_SENDER = "DouDou"
 
