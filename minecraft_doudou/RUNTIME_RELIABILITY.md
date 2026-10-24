@@ -47,7 +47,10 @@ and could be swept into a future fresh batch, possibly resurrecting a task.
   that *original event excluded from the active inbox*. The original event
   payload and event ID remain in `events`; they are **not** an executed
   task or silently forgotten. Non-chat events remain untouched.
-- The MAIN's `child_once` only reads the active inbox. The reviewer can
+- The MAIN's `child_once` only reads the active inbox, and returns a
+  compact `review_pending` count in the same tool response. A nonzero
+  count asks MAIN to inspect the private review queue when available;
+  no stale instructions are silently reactivated. The reviewer can
   inspect quarantined items with:
   `python3 -m minecraft_doudou.event_lifecycle list --db "$CHAT_INBOX"`.
   This intentionally prints original chat **only to the private local CLI**,
