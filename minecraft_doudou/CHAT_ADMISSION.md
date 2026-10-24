@@ -13,7 +13,7 @@ so other players' collected messages may block the reply batch.
 New Python policy (before the model):
 - All chat by `Huhabubu` goes to MAIN (no wake word needed).
 - Other Minecraft players only if their text includes English `doudou`
-  case-insensitively, or Chinese `豆豆`. Unaddressed lines never enter
+  case-insensitively (ignore embedded whitespace such as `dou dou`, `dou douu`), or Chinese `豆豆`. Unaddressed lines never enter
   the event inbox. This is a substring filter, not a word-boundary match.
 - `DouDou` itself is excluded (prevents self-reply feedback loops).
 - Event receiver independently applies the same rule as defense-in-depth.
@@ -48,5 +48,9 @@ silently discard old pending events; reconcile them explicitly.
 Verify one sender and no duplicate MAIN reply writer remain.
 
 No new LLM, websocket, game-client change or Minecraft server restart
-is required. **Do not switch production until this whole PR #8 phase
-receives environment validation and a single scheduled cutover.**
+is required. **Run a single controlled **main-server** integration cutover after the
+whole PR #8 candidate passes CI; separate test-world/clone-only trials are
+not a prerequisite. The owner permits short downtime to restart client or
+Python services. Backup the live SQLite inbox before applying lifecycle
+sweep, retain the old sender until the replacement is ready, and verify
+no duplicate writer during the switch.**
