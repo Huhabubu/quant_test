@@ -56,6 +56,10 @@ def load_config(path):
            for name, unit in services.items()):
         raise CoordinatorError("invalid_systemd_unit")
     data["systemd_units"] = services
+    scope = data.get("systemd_scope", "user")
+    if scope not in ("user", "system", "none"):
+        raise CoordinatorError("invalid_systemd_scope")
+    data["systemd_scope"] = scope
     path = data.get("state_path")
     if path is not None:
         _absolute_path(path, "state_path")
@@ -82,11 +86,15 @@ def _atomic_status(path, payload):
             os.unlink(tmp)
 
 
-def _systemd_service(unit):
-    # Query only. Unit files use Restart=on-failure independently of Muse.
+def _systemd_service(unit, scope="user"):
+    # Query only. Use the host's ACTUAL service manager.
+    # --system requires a registered system unit and host privileges to set
+    # one up; it does not grant or request those permissions.
+    if scope not in ("user", "system"):
+        return "unobservable"
     try:
         result = subprocess.run(
-            ["systemctl", "--user", "is-active", unit],
+            ["systemctl", "--" + scope, "is-active", unit],
             capture_output=True, text=True, timeout=2, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -113,7 +121,7 @@ def _state_health(path, now):
         return "stale_or_unavailable"
 
 
-def sample(config, *, now=None, service_check=_systemd_service):
+def sample(config, *, now=None, service_check=None):
     now = time.time() if now is None else now
     reviews = EventReviews(config["db"])
     try:
@@ -139,12 +147,23 @@ def sample(config, *, now=None, service_check=_systemd_service):
         except sqlite3.OperationalError as exc:
             if "no such table" not in str(exc):
                 raise
+        scope = config.get("systemd_scope", "user")
+        if service_check is None:
+            service_check = lambda unit: _systemd_service(unit, scope)
         services = {
-            name: service_check(unit)
+            name: (service_check(unit) if scope != "none" else "unobservable")
             for name, unit in config.get("systemd_units", {}).items()
         }
-        unhealthy = sorted(name for name, value in services.items()
-                           if value != "active")
+        # A missing D-Bus or unsupported systemctl environment is *unknown*,
+        # not evidence that a daemon crashed. Keep it separately visible.
+        unhealthy = sorted(
+            name for name, value in services.items()
+            if value in ("inactive", "failed", "deactivating")
+        )
+        unobservable = sorted(
+            name for name, value in services.items()
+            if value == "unobservable"
+        )
         payload = {
             "sampled_at": now,
             "inbox": {"pending_total": total, "pending_chat": chat,
@@ -154,13 +173,16 @@ def sample(config, *, now=None, service_check=_systemd_service):
             "tasks": pending_tasks,
             "services": services,
             "unhealthy_units": unhealthy,
+            "unobservable_units": unobservable,
+            "systemd_scope": scope,
             "game_state": _state_health(config.get("state_path"), now),
             "main_agent": {
                 "availability": "unobservable_without_host_api",
                 "automatic_revival": "not_supported_by_current_host",
                 "chat_attention_needed": chat > 0,
             },
-            "service_management": "external_systemd_only",
+            "service_management": ("external_systemd_supervisor"
+                                   if scope != "none" else "not_configured"),
         }
         _atomic_status(config["status_path"], payload)
         return payload
