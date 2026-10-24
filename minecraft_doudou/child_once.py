@@ -45,6 +45,7 @@ import sqlite3
 import sys
 import time
 
+from .chat_policy import admitted_chat
 
 MAX_CHAT_BATCH = 20
 
@@ -72,16 +73,18 @@ def fetch_chats(db_path, sender):
     chats = []
     for seq, event_id, payload, received_at in reversed(rows):
         inner = json.loads(payload)
-        if inner.get("sender") != sender:
-            # prepare would ACK this event as well; never silently sweep a
-            # pending chat that the fast-path agent is not allowed to see.
-            raise ValueError("pending_chat_wrong_sender_use_full_path")
-        if not isinstance(inner.get("text"), str):
-            raise ValueError("pending_chat_without_text")
+        player = inner.get("sender")
+        text = inner.get("text")
+        if not admitted_chat(player, text, sender):
+            # Never hide unqualified foreign records in a batch that MAIN
+            # will atomically ACK by sequence; fail closed for review.
+            raise ValueError("pending_chat_wrong_sender_or_not_addressed")
         chats.append({
             "seq": seq,
             "event_id": event_id,
-            "text": inner["text"],
+            "sender": player,
+            "is_owner": player == sender,
+            "text": text,
             "received_at": received_at,
         })
     return chats
