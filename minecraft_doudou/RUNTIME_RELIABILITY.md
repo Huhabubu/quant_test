@@ -19,7 +19,7 @@ and could be swept into a future fresh batch, possibly resurrecting a task.
 
 - **Existing receiver + three relays + ONE sender** are ordinary Python
   services. On Linux, run them under the existing supported system manager
-  (e.g. `systemd --user`) with **one named unit per process** and bounded
+  (e.g. a validated system-level systemd service) with **one named unit per process** and bounded
   restart settings. Do not let a second coordinator also spawn them.
 - `runtime_coordinator` is one continuously supervised Python monitor.
   It reads SQLite, explicitly quarantines stale/replayed chat, checks
@@ -71,9 +71,11 @@ and could be swept into a future fresh batch, possibly resurrecting a task.
 
 **Do not deploy from this document automatically.** The Muse operator
 first checks the exact active Python interpreter/worktree/DB/state paths,
-systemd user-manager availability, login persistence (linger), instance
-permissions, and whether any old unmanaged receiver/relays/sender already
-run. Never put a second sender on the same SQLite database.
+the *actual* supervisor: Muse confirmed its user-manager D-Bus is
+absent, although PID 1 is systemd. Check whether **system-level** unit
+creation is permitted and persistent; if it is not, report it instead
+of assuming user units work. Verify permissions, environment and whether
+any old unmanaged receiver/relays/sender already run. Never put a second sender on the same SQLite database.
 
 Use one template for each existing Python service, with fully verified paths:
 
@@ -118,6 +120,7 @@ Example runtime configuration (replace paths and units with measured values):
   "lock_path": "/ACTUAL/private/runtime-coordinator.lock",
   "state_path": "/ACTUAL/config/doudou-io/state.json",
   "interval_seconds": 3,
+  "systemd_scope": "system",
   "systemd_units": {
     "receiver": "doudou-receiver.service",
     "relay1": "doudou-relay-player.service",
@@ -128,11 +131,14 @@ Example runtime configuration (replace paths and units with measured values):
 }
 ```
 
-Private directories and configuration should be owner-only. The coordinator
-does **read-only** `systemctl --user is-active UNIT` queries; systemd's
-`Restart=on-failure` provides process restarts. An inaccessible user bus
-is reported `unobservable`, never misreported `active`. A service being
-active does not guarantee end-to-end message delivery.
+Private directories and configuration should be owner-only. The coordinator does **read-only** `systemctl --system is-active UNIT`
+queries when `systemd_scope=system`; `user` selects the user bus, and
+`none` skips unit queries when neither is available. **System units only
+work if the host actually allows installation**; this is not a workaround
+for missing privileges. A missing bus is `unobservable_units`, not
+`unhealthy_units`. Systemd's `Restart=on-failure` can supervise real
+installed units, but no configuration can resurrect the Muse model session.
+A unit being active does not prove messages reach the AI.
 
 Do a single nonresident smoke check before running a supervised monitor:
 
@@ -140,13 +146,19 @@ Do a single nonresident smoke check before running a supervised monitor:
 python3 -m minecraft_doudou.runtime_coordinator --config /PRIVATE/runtime-config.json --once
 ```
 
-It writes a private JSON snapshot but **does** quarantine old chat: test
-with a cloned SQLite backup first! Do not point `--once` at the live DB
-until its review obligations and one-time backup have been examined.
+It writes a private JSON snapshot but **does** quarantine old chat.
+The owner now authorizes **direct main-server testing**: take a consistent
+live SQLite backup, inspect pending chats, then run `--once` against
+the real inbox and verify that only expired chats enter `needs_review`.
+Do not automatically replay old commands or clear claimed tasks.
 
 ## One coherent acceptance gate
 
-Use a clone, not live Minecraft:
+Run integration checks directly on the **authorized main Minecraft server**.
+Short client or Python-service interruptions are acceptable to the owner.
+Avoid recreating a separate Minecraft test world or cloned inbox as a
+mandatory gate. Keep the host's process counts, real DB backup, scope of
+game actions and rollback evidence before altering existing writers:
 1. One stale task followed by a fresh greeting: routed prepare fails
    before any ACK; coordinator moves the old task into
    `needs_review` (full source preserved); fresh greeting then routes.
@@ -154,13 +166,16 @@ Use a clone, not live Minecraft:
    are not auto-executed. Non-chat event handling stays unchanged.
 3. Coordinator can start without Muse or the Minecraft client and report
    `unobservable` correctly; second coordinator refuses its lock.
-4. Supervisor's verified units recover from one deliberate *test-only*
-   process failure without duplicate sender processes, using an
-   isolated staging runtime; failing units become visible in status.
+4. If a supported system-level supervisor is available, run a controlled
+   restart on the main host, confirm receiver/relay/sender are singletons,
+   and check coordinator status reflects actual process states. If no
+   persistent supervisor is available, report that limit rather than
+   claiming the monitor's own process is automatically recoverable.
 5. Separate future work: sender 15s M1 say block, real physical STOP,
    main session auto-revival, task spawn recovery, active progress broadcast.
 
-**Rollout boundary:** one review of the full batch, one compatibility
-check of live worktree/DB, one planned restart/migration of the *Python
-infrastructure only* with single-writer handoff, then ordinary passive
-metrics. No version flip for each small code edit.
+**Rollout boundary:** one coherent review, one main-server integration
+cutover with a consistent DB backup and single-writer handoff, then
+natural gameplay telemetry. This is **not** permission to enable arbitrary
+Baritone block breaking or M1 craft (still separately unsafe). No
+per-commit restart or version flip: deploy this batch once when validated.
