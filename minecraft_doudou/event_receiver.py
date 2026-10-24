@@ -13,6 +13,8 @@ import sqlite3
 import sys
 import time
 
+from .chat_policy import admitted_chat, PLAYER_NAME
+
 ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 MAX_BODY = 65536
 MAX_PENDING = 10000
@@ -22,7 +24,10 @@ NONCHAT_TYPES = tuple(t for t in WAKE_TYPES if t != "chat")
 
 
 class EventInbox:
-    def __init__(self, path):
+    def __init__(self, path, *, chat_owner=None):
+        if chat_owner is not None and not PLAYER_NAME.fullmatch(chat_owner):
+            raise ValueError("invalid_chat_owner")
+        self.chat_owner = chat_owner
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.conn = sqlite3.connect(str(path), timeout=5)
@@ -41,6 +46,12 @@ class EventInbox:
         self.conn.commit()
 
     def accept(self, event_id, event):
+        # Admission before durable storage: unrelated public chat never
+        # reaches the inbox or wakes MAIN. Never suppress game-state events.
+        if (event.get("type") == "chat" and self.chat_owner is not None
+                and not admitted_chat(event.get("sender"), event.get("text"),
+                                      self.chat_owner)):
+            return "ignored"
         encoded = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
         with self.conn:
             previous = self.conn.execute(
@@ -122,8 +133,8 @@ def validate_request(headers, raw):
     return eid, event
 
 
-def serve(db, port, token):
-    inbox = EventInbox(db)
+def serve(db, port, token, chat_owner="Huhabubu"):
+    inbox = EventInbox(db, chat_owner=chat_owner)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -168,7 +179,7 @@ def serve(db, port, token):
             except sqlite3.Error:
                 self.send_json(503, {"error": "storage_unavailable"})
                 return
-            codes = {"accepted": 200, "duplicate": 200,
+            codes = {"accepted": 200, "duplicate": 200, "ignored": 200,
                      "conflict": 409, "full": 503}
             self.send_json(codes[status], {"status": status})
 
@@ -208,6 +219,7 @@ def main(argv=None):
         if name == "serve":
             cmd.add_argument("--port", type=int, default=18765)
             cmd.add_argument("--token-file", required=True)
+            cmd.add_argument("--owner", default="Huhabubu")
         if name == "arm":
             cmd.add_argument("--timeout", type=float, default=0)
             cmd.add_argument("--poll-seconds", type=float, default=0.1)
@@ -229,7 +241,7 @@ def main(argv=None):
         token = secret_path.read_text(encoding="utf-8").strip()
         if len(token) < 32:
             parser.error("token too short")
-        serve(args.db, args.port, token)
+        serve(args.db, args.port, token, args.owner)
         return 0
     if args.command == "arm":
         if not 0.02 <= args.poll_seconds <= 5 or args.timeout < 0:
