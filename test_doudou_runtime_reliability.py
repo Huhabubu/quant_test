@@ -116,6 +116,18 @@ class RuntimeReliabilityTests(unittest.TestCase):
         self.assertEqual(sample(self.config, service_check=lambda _: "active")[
             "reviews"]["newly_quarantined"], 0)
 
+    def test_main_sees_review_obligation_without_new_tool_turn(self):
+        from minecraft_doudou.child_once import run
+        self.chat("stale_task", "去挖20个铁矿", age=150)
+        self.assertEqual(self.reviews.sweep(), 1)
+        fresh_seq = self.chat("fresh", "在吗")
+        state_path = Path(self.temp.name) / "state.json"
+        state_path.write_text('{"in_world":false}', encoding="utf-8")
+        context = run(self.db, str(state_path), "Huhabubu")
+        self.assertEqual(context["review_pending"], 1)
+        self.assertEqual(context["chat"]["seq"], fresh_seq)
+        self.assertEqual([e["event_id"] for e in context["chats"]], ["fresh"])
+
     def test_single_coordinator_lock_denies_second_owner(self):
         Path(self.lock).touch(mode=0o600)
         with open(self.lock) as stream:
