@@ -87,6 +87,26 @@ def fetch_chats(db_path, sender):
     return chats
 
 
+def fetch_review_count(db_path):
+    """Read-only number of quarantined instructions awaiting MAIN review.
+
+    The table may not exist before the coordinator's first migration.
+    This adds no model tool roundtrip to the existing child_once fast path.
+    """
+    db = sqlite3.connect("file:{}?mode=ro".format(db_path), uri=True)
+    try:
+        try:
+            return db.execute(
+                "SELECT COUNT(*) FROM event_reviews WHERE state='needs_review'"
+            ).fetchone()[0]
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
+            return 0
+    finally:
+        db.close()
+
+
 def fetch_chat(db_path, sender):
     """Compatibility helper returning the most recent pending owner chat."""
     chats = fetch_chats(db_path, sender)
@@ -126,6 +146,7 @@ def run(db_path, state_path, sender, telemetry_path=None):
     chat = chats[-1] if chats else None
     t_drained = time.time()
     state = fetch_state(state_path)
+    review_pending = fetch_review_count(db_path)
     t_state = time.time()
     if telemetry_path:
         try:
@@ -139,7 +160,8 @@ def run(db_path, state_path, sender, telemetry_path=None):
                 }) + "\n")
         except OSError:
             pass  # telemetry must never break the fetch
-    return {"chat": chat, "chats": chats, "state": state}
+    return {"chat": chat, "chats": chats, "state": state,
+            "review_pending": review_pending}
 
 
 def main(argv=None):
