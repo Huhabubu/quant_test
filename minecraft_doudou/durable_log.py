@@ -18,9 +18,12 @@ MAX_LOG_LINE = 65536
 
 
 class DurableChatTail:
-    def __init__(self, path, sender, outbox):
+    def __init__(self, path, sender, outbox, *, owner=None):
         self.path = Path(path)
         self.sender = sender
+        self.owner = owner
+        if sender == "*" and owner is None:
+            raise ValueError("wildcard_chat_requires_owner")
         self.outbox = outbox
         self.source = str(self.path.resolve())
         self.recovery_target = None
@@ -80,7 +83,7 @@ class DurableChatTail:
                     continue
                 complete_offset = stream.tell()
                 line = raw.decode("utf-8", errors="replace")
-                event = parse_chat(line, self.sender)
+                event = parse_chat(line, self.sender, owner=self.owner)
                 if event is None:
                     continue
                 source_clock = LOG_CLOCK.match(line)
