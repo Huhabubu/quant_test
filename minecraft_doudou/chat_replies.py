@@ -156,6 +156,23 @@ class ReplyQueue:
                     and source_time > 0
                     and when - source_time > MAX_AGE_SECONDS):
                 raise ReplyError("source_chat_is_stale_do_not_reply")
+            # A new fresh chat must NEVER revive/ACK/execute older stale
+            # chat commands. Even if the coordinator is down, fail closed and
+            # require explicit quarantine/review before preparing this batch.
+            from .event_lifecycle import stale_reason
+            previous_chats = self.conn.execute(
+                "SELECT id,payload,received_at FROM events "
+                "WHERE kind='chat' AND handled_at IS NULL AND seq<=?",
+                (through_seq,),
+            ).fetchall()
+            for old_id, old_payload, old_received in previous_chats:
+                try:
+                    old_event = json.loads(old_payload)
+                    old_reason = stale_reason(old_event, old_received, when)
+                except (ValueError, TypeError, AttributeError):
+                    old_reason = "malformed_chat_requires_review"
+                if old_reason is not None:
+                    raise ReplyError("pending_chat_requires_review:" + old_reason)
             # Fail closed when through_seq includes a pending chat later than
             # the event being answered, to avoid accidentally ACKing a new turn.
             newer = self.conn.execute(
