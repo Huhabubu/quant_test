@@ -14,9 +14,13 @@ SELF_SENDER = "DouDou"
 
 
 def addressed(text):
-    return isinstance(text, str) and any(
-        word in text.casefold() for word in WAKE_WORDS
-    )
+    if not isinstance(text, str):
+        return False
+    # Players often say "dou dou" / "dou douu". Ignore spacing
+    # between letters (ASCII and Unicode whitespace); do not turn
+    # unrelated public chat into a model wakeup.
+    folded = "".join(char for char in text.casefold() if not char.isspace())
+    return any(word in folded for word in WAKE_WORDS)
 
 
 def admitted_chat(sender, text, owner="Huhabubu"):
