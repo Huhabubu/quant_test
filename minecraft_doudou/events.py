@@ -12,6 +12,8 @@ import re
 import threading
 import time
 
+from .chat_policy import admitted_chat
+
 
 CHAT_LINE = re.compile(r"\[CHAT\]\s*<(?P<sender>[A-Za-z0-9_]{3,16})>\s*(?P<text>.*)")
 OWNER_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,16}$")
@@ -19,14 +21,27 @@ OWNER_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,16}$")
 ANSI_CSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
-def parse_chat(line, allowed_sender):
+def parse_chat(line, allowed_sender, *, owner=None):
+    """Default exact-sender API is backwards compatible.
+
+    owner=... enables the new admission policy; sender='*' captures all
+    players with ONE log tail so addressed messages aren't duplicated by
+    separate per-player relays.
+    """
     match = CHAT_LINE.search(ANSI_CSI.sub("", line))
-    if not match or match.group("sender") != allowed_sender:
+    if not match:
+        return None
+    sender = match.group("sender")
+    if allowed_sender != "*" and sender != allowed_sender:
         return None
     text = match.group("text").strip()
     if not text:
         return None
-    return {"type": "chat", "sender": match.group("sender"), "text": text[:500]}
+    if owner is not None and not admitted_chat(sender, text, owner):
+        return None
+    if allowed_sender == "*" and owner is None:
+        raise ValueError("wildcard_chat_requires_owner")
+    return {"type": "chat", "sender": sender, "text": text[:500]}
 
 
 class MinecraftChatEvents:
