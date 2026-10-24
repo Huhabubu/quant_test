@@ -111,6 +111,11 @@ class RuntimeReliabilityTests(unittest.TestCase):
         self.assertEqual(data["main_agent"]["availability"],
                          "unobservable_without_host_api")
         self.assertEqual(data["services"]["receiver"], "unobservable")
+        self.assertEqual(data["unobservable_units"], ["receiver"])
+        self.assertEqual(data["unhealthy_units"], [])
+        self.assertEqual(sample(
+            self.config, service_check=lambda _: "failed"
+        )["unhealthy_units"], ["receiver"])
         self.assertNotIn("私密聊天内容", Path(self.status).read_text())
         self.assertNotIn("还有新消息", Path(self.status).read_text())
         self.assertEqual(sample(self.config, service_check=lambda _: "active")[
