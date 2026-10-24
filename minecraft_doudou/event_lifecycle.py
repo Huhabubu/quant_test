@@ -14,7 +14,7 @@ import sqlite3
 import sys
 import time
 
-from .chat_replies import MAX_AGE_SECONDS
+MAX_AGE_SECONDS = 120  # Must match the reply freshness bound.
 from .event_receiver import ID_PATTERN
 
 
