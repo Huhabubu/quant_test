@@ -224,5 +224,31 @@ class MainAgentTaskHandoffTests(unittest.TestCase):
         self.assertEqual(json.loads(out.getvalue())["task"]["event_id"], "g1")
 
 
+    def test_worker_progress_is_durable_and_visible_without_waiting(self):
+        from minecraft_doudou.child_once import run
+        source_seq = self.add("job_progress", "调查附近区域")
+        self.reply.prepare(
+            "job_progress", source_seq, "我去看看", routes=[
+                {"event_id": "job_progress", "kind": "task", "lane": "game"}
+            ], authorized_sender="Huhabubu",
+        )
+        task = self.tasks.claim("worker-one")
+        self.assertEqual(task["event_id"], "job_progress")
+        with self.assertRaisesRegex(TaskError, "active_worker_claim"):
+            self.tasks.report_progress("job_progress", "other", "working",
+                                       "试图越权")
+        self.assertEqual(self.tasks.report_progress(
+            "job_progress", "worker-one", "working", "已完成初步观察"), "working")
+        state_path = str(Path(self.tmp.name) / "state.json")
+        context = run(self.db, state_path, "Huhabubu")
+        self.assertEqual(context["active_tasks"][0]["progress"]["summary"],
+                         "已完成初步观察")
+        self.assertEqual(context["active_tasks"][0]["state"], "claimed")
+        self.tasks.finish("job_progress", "worker-one", "completed")
+        with self.assertRaisesRegex(TaskError, "active_worker_claim"):
+            self.tasks.report_progress("job_progress", "worker-one", "working",
+                                       "完成后不应继续报告")
+
+
 if __name__ == "__main__":
     unittest.main()
