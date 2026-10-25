@@ -255,7 +255,7 @@ class ReplyQueue:
             self.conn.rollback()
             raise
 
-    def send_once(self, deliver):
+    def send_once(self, deliver, *, on_claim=None):
         self.conn.execute("BEGIN IMMEDIATE")
         try:
             row = self.conn.execute(
@@ -278,6 +278,11 @@ class ReplyQueue:
                 self.conn.commit()
                 return {"event_id": row[0], "state": "expired_unsent",
                         "verified": False}
+            # Optional durable pre-wire receipt fence. Called inside the
+            # same transaction that claims the reply, before any TCP write.
+            # A callback error leaves it queued and no wire attempt occurs.
+            if on_claim is not None:
+                on_claim(self.conn, row[0], row[1], now)
             self.conn.execute(
                 "UPDATE chat_replies SET state='sending',attempted_at=? "
                 "WHERE event_id=?", (now, row[0]),
@@ -299,7 +304,9 @@ class ReplyQueue:
             diagnostic = type(exc).__name__
             if type(exc).__name__ == "M1ChatError":
                 diagnostic = str(exc)[:80]
-        state = ("mocked" if mocked else "accepted_unverified") if accepted else "uncertain"
+        state = ("mocked" if mocked else
+                 "sent_unverified" if result.get("awaiting_game_log") is True
+                 else "accepted_unverified") if accepted else "uncertain"
         skipped = 0
         if accepted and result.get("transport") == "m1":
             candidate = result.get("skipped_async_frames", 0)
@@ -309,7 +316,9 @@ class ReplyQueue:
             if mocked:
                 note = "simulation_only"
             elif result.get("transport") == "m1":
-                note = "m1_tcp_accepted_unverified"
+                note = ("m1_say_wire_sent_log_pending"
+                        if state == "sent_unverified"
+                        else "m1_tcp_accepted_unverified")
                 if skipped:
                     note += f":async_skipped={skipped}"
             else:
