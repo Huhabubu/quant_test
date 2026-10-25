@@ -78,11 +78,18 @@ handling session. Instead:
    nor flood itself with task completion notifications. Worker writes
    persistent progress; MAIN resumes chat arm before doing lower-priority
    research.
-4. If host runs MAIN serially and defers chat notifications until the
+4. A claimed Worker can update its own lightweight progress using:
+   `python3 -m minecraft_doudou.task_handoffs progress --db "$CHAT_INBOX" --worker <claimed-worker> --event-id <real-event-id> --stage working --summary '已完成初步观察'`.
+   Stage is started/working/blocked, and summary is bounded. This records
+   progress without sending a new completion handoff to MAIN; `child_once`
+   includes it on the next chat. It is **worker self-report**, not
+   independently proven game progress. Finished or non-owning workers are
+   forbidden from changing it.
+5. If host runs MAIN serially and defers chat notifications until the
    active turn finishes, this is a *platform bottleneck*. Report T1->T2
    and turn occupancy, not an imagined Python fix. Prioritize a supported
    host wake/preemption/session API if one exists; do not invent one.
-5. Never create another model as an independent reply/intent authority.
+6. Never create another model as an independent reply/intent authority.
    If parallel model sessions turn out to be necessary, maintain a
    single MAIN decision writer, explicit version/epoch checks, and user
    permission before changing the architecture.
