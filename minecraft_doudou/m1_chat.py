@@ -107,13 +107,14 @@ def _diag_record(phase, result, frames, skipped, started, clock, exc=None):
         pass
 
 
-def _await_frame(reader, sock, phase, accepted, *, clock=time.monotonic):
+def _await_frame(reader, sock, phase, accepted, *, clock=time.monotonic,
+                 timeout_s=FRAME_WAIT_SECONDS):
     """Bound total wall time AND number of unsolicited frames per phase.
 
     No pre-send drain: notifications can arrive after the drain, so always
     filter while waiting for each actual command's acknowledgement.
     """
-    deadline = clock() + FRAME_WAIT_SECONDS
+    deadline = clock() + timeout_s
     started = clock()
     skipped = 0
     frames = []
@@ -169,5 +170,31 @@ def send_m1_chat(text, *, connect=socket.create_connection):
         if ignored:
             result["skipped_async_frames"] = ignored
         return result
+    finally:
+        sock.close()
+
+def submit_m1_chat_fast(text, *, connect=socket.create_connection):
+    """One TCP say write, without waiting for a nonexistent M1 say OK.
+
+    A completed sendall is NOT confirmation of in-game delivery. Caller
+    must commit an at-most-once claim and pre-send log floor before calling
+    this function; only independent game-log evidence can confirm visibility.
+    """
+    command = format_m1_say(text)
+    sock = connect((HOST, PORT), 2)
+    try:
+        reader = M1Reader(sock)
+        _await_frame(
+            reader, sock, "banner",
+            lambda frame, kind: kind not in ("async", "error")
+            and ("M1" in frame or "Machine One" in frame),
+            timeout_s=3.0,
+        )
+        sock.settimeout(2.0)
+        sock.sendall((command + "\n").encode("utf-8"))
+        # Closing after sendall sends TCP FIN; no reading async self-echo
+        # and no waiting the previously observed 15-second say timeout.
+        return {"accepted": True, "verified": False, "transport": "m1",
+                "awaiting_game_log": True}
     finally:
         sock.close()
