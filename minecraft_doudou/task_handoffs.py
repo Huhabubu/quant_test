@@ -36,7 +36,52 @@ class TaskQueue:
             "created_at REAL NOT NULL, claimed_at REAL, claimed_by TEXT, "
             "finished_at REAL, result_note TEXT NOT NULL DEFAULT '')"
         )
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS task_progress ("
+            "event_id TEXT PRIMARY KEY, worker TEXT NOT NULL, "
+            "stage TEXT NOT NULL, summary TEXT NOT NULL, "
+            "updated_at REAL NOT NULL, revision INTEGER NOT NULL DEFAULT 1)"
+        )
         self.conn.commit()
+
+    def report_progress(self, event_id, worker, stage, summary):
+        """Worker writes status only; no game action, spawn or MAIN wake.
+
+        Worker progress is self-reported; not evidence of execution or
+        completion. Only the claimed worker may write to its own task.
+        """
+        if not isinstance(event_id, str) or not EVENT_ID.fullmatch(event_id):
+            raise TaskError("invalid_event_id")
+        if not isinstance(worker, str) or not WORKER_ID.fullmatch(worker):
+            raise TaskError("invalid_worker")
+        if stage not in ("started", "working", "blocked"):
+            raise TaskError("invalid_progress_stage")
+        if (not isinstance(summary, str) or not 1 <= len(summary) <= 160
+                or any(ord(c) < 32 for c in summary)):
+            raise TaskError("invalid_progress_summary")
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.conn.execute(
+                "SELECT 1 FROM task_handoffs "
+                "WHERE event_id=? AND state='claimed' AND claimed_by=?",
+                (event_id, worker),
+            ).fetchone()
+            if row is None:
+                raise TaskError("progress_requires_active_worker_claim")
+            self.conn.execute(
+                "INSERT INTO task_progress "
+                "(event_id,worker,stage,summary,updated_at,revision)"
+                " VALUES(?,?,?,?,?,1) ON CONFLICT(event_id) DO UPDATE SET "
+                "stage=excluded.stage,summary=excluded.summary,"
+                "worker=excluded.worker,updated_at=excluded.updated_at,"
+                "revision=task_progress.revision+1",
+                (event_id, worker, stage, summary, time.time()),
+            )
+            self.conn.commit()
+            return stage
+        except BaseException:
+            self.conn.rollback()
+            raise
 
     def claim(self, worker):
         if not isinstance(worker, str) or not WORKER_ID.fullmatch(worker):
@@ -115,15 +160,21 @@ class TaskQueue:
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Durable DouDou child-task inbox")
     sub = parser.add_subparsers(dest="action", required=True)
-    for action in ("list", "claim", "finish"):
+    for action in ("list", "claim", "finish", "progress"):
         p = sub.add_parser(action)
         p.add_argument("--db", required=True)
-        if action in ("claim", "finish"):
+        if action in ("claim", "finish", "progress"):
             p.add_argument("--worker", required=True)
         if action == "list":
             p.add_argument("--limit", type=int, default=50)
-        if action == "finish":
+        if action in ("finish", "progress"):
             p.add_argument("--event-id", required=True)
+        if action == "progress":
+            p.add_argument("--stage", required=True,
+                           choices=("started", "working", "blocked"))
+            p.add_argument("--summary", required=True)
+        if action == "finish":
+            
             p.add_argument("--status", required=True,
                            choices=("completed", "failed", "cancelled"))
             p.add_argument("--note", default="")
@@ -134,6 +185,9 @@ def main(argv=None):
             result = {"tasks": queue.list_tasks(args.limit)}
         elif args.action == "claim":
             result = {"task": queue.claim(args.worker)}
+        elif args.action == "progress":
+            result = {"stage": queue.report_progress(
+                args.event_id, args.worker, args.stage, args.summary)}
         else:
             result = {"state": queue.finish(
                 args.event_id, args.worker, args.status, args.note)}

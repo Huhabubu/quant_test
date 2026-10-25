@@ -110,6 +110,52 @@ def fetch_review_count(db_path):
         db.close()
 
 
+def fetch_task_brief(db_path, *, limit=5):
+    """One read-only active-task snapshot, not a claim of worker execution.
+
+    MAIN can answer "你在做什么" without another model/tool round-trip.
+    Absence of heartbeats means claimed != proven running.
+    """
+    db = sqlite3.connect("file:{}?mode=ro".format(db_path), uri=True)
+    try:
+        try:
+            rows = db.execute(
+                "SELECT h.lane,h.state,h.claimed_by,h.instruction,h.claimed_at,"
+                "p.stage,p.summary,p.updated_at "
+                "FROM task_handoffs h LEFT JOIN task_progress p "
+                "ON p.event_id=h.event_id "
+                "WHERE h.state IN ('queued','claimed') "
+                "ORDER BY CASE h.state WHEN 'claimed' THEN 0 ELSE 1 END,"
+                "h.created_at LIMIT ?", (limit,),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
+            try:
+                rows = [(lane,state,worker,inst,claimed,None,None,None)
+                        for lane,state,worker,inst,claimed in db.execute(
+                    "SELECT lane,state,claimed_by,instruction,claimed_at "
+                    "FROM task_handoffs WHERE state IN ('queued','claimed') "
+                    "ORDER BY CASE state WHEN 'claimed' THEN 0 ELSE 1 END,"
+                    "created_at LIMIT ?", (limit,),
+                ).fetchall()]
+            except sqlite3.OperationalError as fallback:
+                if "no such table" not in str(fallback):
+                    raise
+                return []
+        return [
+            {"lane": lane, "state": state, "worker": worker,
+             "instruction": instruction[:100], "claimed_at": claimed_at,
+             "progress": {"stage": stage, "summary": summary,
+                          "updated_at": updated}
+                         if stage is not None else None}
+            for (lane, state, worker, instruction, claimed_at,
+                 stage, summary, updated) in rows
+        ]
+    finally:
+        db.close()
+
+
 def fetch_chat(db_path, sender):
     """Compatibility helper returning the most recent pending owner chat."""
     chats = fetch_chats(db_path, sender)
@@ -150,6 +196,7 @@ def run(db_path, state_path, sender, telemetry_path=None):
     t_drained = time.time()
     state = fetch_state(state_path)
     review_pending = fetch_review_count(db_path)
+    active_tasks = fetch_task_brief(db_path)
     t_state = time.time()
     if telemetry_path:
         try:
@@ -164,7 +211,10 @@ def run(db_path, state_path, sender, telemetry_path=None):
         except OSError:
             pass  # telemetry must never break the fetch
     return {"chat": chat, "chats": chats, "state": state,
-            "review_pending": review_pending}
+            "review_pending": review_pending,
+            "active_tasks": active_tasks,
+            "chat_age_s": round(max(0, t_start - chat["received_at"]), 2)
+                          if chat else None}
 
 
 def main(argv=None):
