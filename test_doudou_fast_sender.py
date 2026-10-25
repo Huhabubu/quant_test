@@ -106,7 +106,7 @@ class FastSenderTests(unittest.TestCase):
                                      "awaiting_game_log": True},
                          on_claim=self.writeoff.claim)
         self.log.rename(self.path / "archived.log")
-        self.log.write_bytes(b"[12:00:00] [CHAT] <DouDou> 待复核\n")
+        self.log.write_bytes("[12:00:00] [CHAT] <DouDou> 待复核\n".encode("utf-8"))
         self.assertEqual(self.writeoff.scan()["rotated"], 1)
         self.assertEqual(self.q.stats(), {"uncertain": 1})
 
