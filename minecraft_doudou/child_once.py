@@ -110,6 +110,35 @@ def fetch_review_count(db_path):
         db.close()
 
 
+def fetch_task_brief(db_path, *, limit=5):
+    """One read-only active-task snapshot, not a claim of worker execution.
+
+    MAIN can answer "你在做什么" without another model/tool round-trip.
+    Absence of heartbeats means claimed != proven running.
+    """
+    db = sqlite3.connect("file:{}?mode=ro".format(db_path), uri=True)
+    try:
+        try:
+            rows = db.execute(
+                "SELECT lane,state,claimed_by,instruction,claimed_at "
+                "FROM task_handoffs WHERE state IN ('queued','claimed') "
+                "ORDER BY CASE state WHEN 'claimed' THEN 0 ELSE 1 END,"
+                "created_at LIMIT ?", (limit,),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
+            return []
+        return [
+            {"lane": lane, "state": state, "worker": worker,
+             "instruction": instruction[:100],
+             "claimed_at": claimed_at}
+            for lane, state, worker, instruction, claimed_at in rows
+        ]
+    finally:
+        db.close()
+
+
 def fetch_chat(db_path, sender):
     """Compatibility helper returning the most recent pending owner chat."""
     chats = fetch_chats(db_path, sender)
@@ -150,6 +179,7 @@ def run(db_path, state_path, sender, telemetry_path=None):
     t_drained = time.time()
     state = fetch_state(state_path)
     review_pending = fetch_review_count(db_path)
+    active_tasks = fetch_task_brief(db_path)
     t_state = time.time()
     if telemetry_path:
         try:
@@ -164,7 +194,10 @@ def run(db_path, state_path, sender, telemetry_path=None):
         except OSError:
             pass  # telemetry must never break the fetch
     return {"chat": chat, "chats": chats, "state": state,
-            "review_pending": review_pending}
+            "review_pending": review_pending,
+            "active_tasks": active_tasks,
+            "chat_age_s": round(max(0, t_start - chat["received_at"]), 2)
+                          if chat else None}
 
 
 def main(argv=None):
