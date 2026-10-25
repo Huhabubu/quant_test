@@ -120,20 +120,37 @@ def fetch_task_brief(db_path, *, limit=5):
     try:
         try:
             rows = db.execute(
-                "SELECT lane,state,claimed_by,instruction,claimed_at "
-                "FROM task_handoffs WHERE state IN ('queued','claimed') "
-                "ORDER BY CASE state WHEN 'claimed' THEN 0 ELSE 1 END,"
-                "created_at LIMIT ?", (limit,),
+                "SELECT h.lane,h.state,h.claimed_by,h.instruction,h.claimed_at,"
+                "p.stage,p.summary,p.updated_at "
+                "FROM task_handoffs h LEFT JOIN task_progress p "
+                "ON p.event_id=h.event_id "
+                "WHERE h.state IN ('queued','claimed') "
+                "ORDER BY CASE h.state WHEN 'claimed' THEN 0 ELSE 1 END,"
+                "h.created_at LIMIT ?", (limit,),
             ).fetchall()
         except sqlite3.OperationalError as exc:
             if "no such table" not in str(exc):
                 raise
-            return []
+            try:
+                rows = [(lane,state,worker,inst,claimed,None,None,None)
+                        for lane,state,worker,inst,claimed in db.execute(
+                    "SELECT lane,state,claimed_by,instruction,claimed_at "
+                    "FROM task_handoffs WHERE state IN ('queued','claimed') "
+                    "ORDER BY CASE state WHEN 'claimed' THEN 0 ELSE 1 END,"
+                    "created_at LIMIT ?", (limit,),
+                ).fetchall()]
+            except sqlite3.OperationalError as fallback:
+                if "no such table" not in str(fallback):
+                    raise
+                return []
         return [
             {"lane": lane, "state": state, "worker": worker,
-             "instruction": instruction[:100],
-             "claimed_at": claimed_at}
-            for lane, state, worker, instruction, claimed_at in rows
+             "instruction": instruction[:100], "claimed_at": claimed_at,
+             "progress": {"stage": stage, "summary": summary,
+                          "updated_at": updated}
+                         if stage is not None else None}
+            for (lane, state, worker, instruction, claimed_at,
+                 stage, summary, updated) in rows
         ]
     finally:
         db.close()
